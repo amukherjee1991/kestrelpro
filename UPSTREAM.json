@@ -1,0 +1,7 @@
+{
+  "comment": "Upstream releases KestrelPro is built from. Update with the fork branches (see web/KESTRELPRO-CHANGES.md).",
+  "pi-hole/docker-pi-hole": "2026.10.0",
+  "pi-hole/web": "v6.6.1",
+  "pi-hole/pi-hole": "v6.5",
+  "pi-hole/FTL": "v6.8"
+}

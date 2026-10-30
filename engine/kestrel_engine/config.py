@@ -56,4 +56,11 @@ DEFAULT_SETTINGS = {
     "few_shot": os.environ.get("FEW_SHOT", "true").lower() in ("1", "true", "yes"),
     # Model pinning (models.py): the digest of `model` when it was chosen; a change is flagged.
     "model_digest": os.environ.get("MODEL_DIGEST", ""),
+    # Block-list false positives (suggestions.py): how many blocked domains to check per hour; 0 = off.
+    "list_checks_per_hour": int(os.environ.get("LIST_CHECKS_PER_HOUR", "60")),
+    # Notifications (notify.py). Off until a URL is set; nothing leaves the network otherwise.
+    "notify_kind": os.environ.get("NOTIFY_KIND", "ntfy"),          # ntfy | webhook
+    "notify_url": os.environ.get("NOTIFY_URL", ""),
+    "notify_events": _list("NOTIFY_EVENTS", "auto_blocked,pending,probation_reverted,list_false_positive"),
+    "notify_pending_at": int(os.environ.get("NOTIFY_PENDING_AT", "10")),
 }

@@ -2,6 +2,8 @@
 import ipaddress
 import time
 
+import requests
+
 from . import config, policies, safety, store
 
 # Never auto-block these or anything under them; a false positive here breaks
@@ -86,7 +88,11 @@ def set_status(ftl, db, domain, status, action=None):
 
 
 def undo(ftl, db):
-    """Remove every deny entry the engine (or the old add-on) ever added."""
+    """Remove every deny entry the engine (or the old add-on) ever added, site-wide rules included."""
+    for e in ftl.list_domains("deny/regex"):
+        if (e.get("comment") or "").startswith(config.TAG):
+            ftl.request("DELETE", f"/domains/deny/regex/{requests.utils.quote(e['domain'], safe='')}")
+    db.execute("delete from site_rules")
     mine = [e["domain"] for e in ftl.list_domains("deny/exact") if (e.get("comment") or "").startswith(config.TAG)]
     for d in mine:
         ftl.remove_deny(d)

@@ -61,7 +61,7 @@ class FTL:
                     pass
                 self.sid = None
 
-    def queries(self, start=0, length=1000, cursor=None, since=None, client_ip=None):
+    def queries(self, start=0, length=1000, cursor=None, since=None, client_ip=None, domain=None):
         """One page of the query log, newest first. Without a cursor FTL returns the
         current largest query ID as `cursor`; passing it back keeps later pages stable."""
         params = {"start": start, "length": min(length, MAX_ROWS)}
@@ -71,6 +71,8 @@ class FTL:
             params["from"] = int(since)
         if client_ip:
             params["client_ip"] = client_ip
+        if domain:
+            params["domain"] = domain
         return self.request("GET", "/queries", params=params)
 
     def list_domains(self, kind):
@@ -92,9 +94,10 @@ class FTL:
         self.request("PUT", f"/domains/deny/exact/{domain}",
                      json={"comment": comment, "groups": list(groups), "enabled": enabled})
 
-    def set_enabled(self, domain, comment, enabled):
+    def set_enabled(self, domain, comment, enabled, kind="exact"):
         # FTL resets a missing comment to empty, so the comment must be sent back as it was.
-        self.request("PUT", f"/domains/deny/exact/{domain}", json={"comment": comment, "enabled": enabled})
+        self.request("PUT", f"/domains/deny/{kind}/{requests.utils.quote(domain, safe='')}",
+                     json={"comment": comment, "enabled": enabled})
 
     def remove_deny(self, domain):
         try:

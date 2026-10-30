@@ -11,7 +11,8 @@ import time
 import requests
 from flask import Blueprint, Flask, abort, g, jsonify, request
 
-from . import accuracy, auth, classify, config, ftl as ftl_api, ingest, models, policies, policy, safety, store
+from . import (accuracy, auth, classify, config, ftl as ftl_api, ingest, models, notify, policies, policy, safety,
+               store, suggestions)
 
 OPEN_PATHS = {"/healthz"}
 STATUS_FILTERS = {
@@ -21,9 +22,9 @@ STATUS_FILTERS = {
     "allowed": (store.ALLOWED, store.USER_ALLOWED),
 }
 HISTORY_FILTERS = {
-    "blocks": (store.AUTO_BLOCKED, store.APPROVED, store.MANUAL_BLOCKED),
+    "blocks": (store.AUTO_BLOCKED, store.APPROVED, store.MANUAL_BLOCKED, store.SITE_BLOCKED),
     "auto": (store.AUTO_BLOCKED,),
-    "undone": (store.UNBLOCKED, store.REJECTED),
+    "undone": (store.UNBLOCKED, store.REJECTED, store.PROBATION_REVERTED, store.LIST_ALLOWED, store.SITE_UNBLOCKED),
     "flagged": (store.FLAGGED,),
 }
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -108,7 +109,8 @@ def create_app(ftl, worker, jobs=None):
             "last_started": float(store.get_state(d, "last_started", 0) or 0),
             "last_finished": float(store.get_state(d, "last_finished", 0) or 0),
             "last_error": store.get_state(d, "last_error", ""),
-            "warnings": json.loads(store.get_state(d, "warnings", "[]")) + [w for w in [models.pin_warning(settings)] if w],
+            "warnings": json.loads(store.get_state(d, "warnings", "[]"))
+            + [w for w in [models.pin_warning(settings), store.get_state(d, "notify_error", "")] if w],
             "reviewed_total": sum(counts.values()),
             "reviewed_today": today,
             "blocked_total": counts.get(store.BLOCKED, 0) + counts.get(store.USER_BLOCKED, 0),
@@ -118,6 +120,8 @@ def create_app(ftl, worker, jobs=None):
             "model": model,
             "prompt_version": classify.PROMPT_VERSION,
             "safety": safety.summary(d),
+            "suggestions": d.execute("select count(*) from gravity_checks where status = ?",
+                                     (suggestions.SUGGESTED,)).fetchone()[0] + len(suggestions.sites(d, settings)),
             "settings": settings,
         })
 
@@ -164,7 +168,7 @@ def create_app(ftl, worker, jobs=None):
         rows = db().execute(sql, args + [limit]).fetchall()
         out = []
         for r in rows:
-            row = {**dict(r), "clients": json.loads(r["clients"] or "[]")}
+            row = {**dict(r), "clients": json.loads(r["clients"] or "[]"), "evidence": json.loads(r["evidence"] or "{}")}
             # Automatic blocks under a group policy apply to those groups only: name them.
             groups = json.loads(r["block_groups"]) if r["block_groups"] else None
             if groups:
@@ -251,6 +255,19 @@ def create_app(ftl, worker, jobs=None):
             changes["storm_devices"] = min(max(int(body["storm_devices"]), 1), 100)
         if "few_shot" in body:
             changes["few_shot"] = bool(body["few_shot"])
+        if "list_checks_per_hour" in body:
+            changes["list_checks_per_hour"] = min(max(int(body["list_checks_per_hour"]), 0), 600)
+        if body.get("notify_kind") in ("ntfy", "webhook"):
+            changes["notify_kind"] = body["notify_kind"]
+        if "notify_url" in body:
+            url = str(body["notify_url"]).strip()
+            if url and not notify.valid_url(url):
+                return jsonify({"error": "bad_request", "message": "The notification address must be an http(s) URL"}), 400
+            changes["notify_url"] = url
+        if "notify_events" in body:
+            changes["notify_events"] = [e for e in body["notify_events"] if e in notify.EVENTS]
+        if "notify_pending_at" in body:
+            changes["notify_pending_at"] = min(max(int(body["notify_pending_at"]), 1), 10000)
         saved = store.save_settings(db(), changes)
         worker.wake()
         return jsonify(saved)
@@ -368,6 +385,64 @@ def create_app(ftl, worker, jobs=None):
     @api.get("/accuracy")
     def get_accuracy():
         return jsonify(accuracy.report(db(), store.get_settings(db())))
+
+    # ---- suggestions (suggestions.py) ---------------------------------------------------
+    @api.get("/suggestions")
+    def get_suggestions():
+        d, settings = db(), store.get_settings(db())
+        lc = getattr(worker, "list_checks", None)
+        waiting = len(lc.pending) if isinstance(getattr(lc, "pending", None), dict) else 0
+        return jsonify({"false_blocks": suggestions.false_positives(d), "sites": suggestions.sites(d, settings),
+                        "rules": suggestions.rules(d),
+                        "list_checks": {"per_hour": settings["list_checks_per_hour"], "waiting": waiting,
+                                        "checked": d.execute("select count(*) from gravity_checks").fetchone()[0]}})
+
+    def _suggestion_error(e):
+        if isinstance(e, ValueError):
+            return jsonify({"error": "bad_request", "message": str(e)}), 400
+        return jsonify({"error": "dns_server", "message": f"The DNS server refused the change: {e}"}), 502
+
+    @api.post("/suggestions/false-blocks/<path:domain>")
+    def act_false_block(domain):
+        action = (request.get_json(silent=True) or {}).get("action")
+        try:
+            if action == "allow":
+                suggestions.allow(ftl, db(), domain)
+            elif action == "dismiss":
+                suggestions.dismiss(db(), "list", domain)
+            else:
+                abort(400)
+        except (ValueError, requests.RequestException) as e:
+            return _suggestion_error(e)
+        return jsonify({"ok": True})
+
+    @api.post("/suggestions/sites/<site>")
+    def act_site(site):
+        action = (request.get_json(silent=True) or {}).get("action")
+        try:
+            if action == "block":
+                return jsonify({"ok": True, "regex": suggestions.block_site(ftl, db(), site)})
+            if action == "unblock":
+                suggestions.unblock_site(ftl, db(), site)
+            elif action == "dismiss":
+                suggestions.dismiss(db(), "site", site)
+            else:
+                abort(400)
+        except (ValueError, requests.RequestException) as e:
+            return _suggestion_error(e)
+        return jsonify({"ok": True})
+
+    # ---- notifications (notify.py) ---------------------------------------------------
+    @api.post("/notify/test")
+    def notify_test():
+        settings = store.get_settings(db())
+        if not settings["notify_url"]:
+            return jsonify({"error": "bad_request", "message": "Set a notification address first"}), 400
+        try:
+            notify.send(settings, [("test", "Test notification from KestrelPro. If you can read this, it works.")])
+        except (ValueError, requests.RequestException) as e:
+            return jsonify({"error": "notify", "message": f"Couldn't send it: {e}"}), 502
+        return jsonify({"ok": True})
 
     @api.post("/run")
     def run_now():

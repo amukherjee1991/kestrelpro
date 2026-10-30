@@ -2,6 +2,7 @@ import os
 import tempfile
 import time
 import unittest
+import urllib.parse
 from unittest import mock
 
 import requests
@@ -17,6 +18,9 @@ class FakeFTL:
         self.denied = {}  # domain -> {"comment", "enabled", "groups"}
         self.groups = [{"id": 0, "name": "Default", "enabled": True}]
         self.clients = []  # [{"client": "192.168.1.20", "groups": [0, 1]}]
+        self.regex = {}    # regex -> {"comment", "enabled", "groups"}
+        self.allow_exact = {}
+        self.search = {}   # domain -> {"gravity": [...], "domains": [...]}
         self.calls = 0
 
     def add(self, domain, ip="192.168.1.5", status="FORWARDED", ts=None):
@@ -24,11 +28,13 @@ class FakeFTL:
         self.rows.append({"id": len(self.rows) + 1, "domain": domain, "status": status,
                           "timestamp": t, "time": t, "client": {"ip": ip, "name": None}})
 
-    def queries(self, start=0, length=1000, cursor=None, since=None, client_ip=None):
+    def queries(self, start=0, length=1000, cursor=None, since=None, client_ip=None, domain=None):
         self.calls += 1
         rows = sorted(self.rows, key=lambda q: -q["id"])
         if client_ip:
             rows = [q for q in rows if q["client"]["ip"] == client_ip]
+        if domain:
+            rows = [q for q in rows if q["domain"] == domain]
         if cursor is not None:
             rows = [q for q in rows if q["id"] <= cursor]
         if since is not None:
@@ -39,6 +45,8 @@ class FakeFTL:
     def list_domains(self, kind):
         if kind == "allow":
             return [{"domain": d, "comment": None, "enabled": True} for d in self.allowed]
+        if kind == "deny/regex":
+            return [{"domain": d, **e} for d, e in self.regex.items()]
         return [{"domain": d, **e} for d, e in self.denied.items()]
 
     def request(self, method, path, **kw):
@@ -48,6 +56,25 @@ class FakeFTL:
             return {"clients": self.clients}
         if (method, path) == ("GET", "/lists"):
             return {"lists": [{"address": "https://example.org/hosts", "type": "block", "enabled": True, "groups": [0]}]}
+        body = kw.get("json") or {}
+        if (method, path) == ("POST", "/domains/deny/regex"):
+            if body["domain"] in self.regex:
+                raise requests.HTTPError(response=mock.Mock(status_code=400, text="The item is already present"))
+            self.regex[body["domain"]] = {"comment": body.get("comment"), "enabled": True, "groups": body.get("groups")}
+            return {}
+        if path.startswith("/domains/deny/regex/"):
+            key = urllib.parse.unquote(path[len("/domains/deny/regex/"):])
+            if method == "DELETE":
+                self.regex.pop(key, None)
+            else:
+                self.regex[key] = {**self.regex.get(key, {}), **body}
+            return {}
+        if (method, path) == ("POST", "/domains/allow/exact"):
+            self.allow_exact[body["domain"]] = body
+            self.allowed.add(body["domain"])
+            return {}
+        if method == "GET" and path.startswith("/search/"):
+            return {"search": self.search.get(path[len("/search/"):], {"gravity": [], "domains": []})}
         raise AssertionError(f"unexpected FTL call {method} {path}")
 
     def deny(self, domain, comment, groups=(0,)):
@@ -56,8 +83,9 @@ class FakeFTL:
     def set_groups(self, domain, comment, groups, enabled=True):
         self.denied[domain] = {"comment": comment, "enabled": enabled, "groups": list(groups)}
 
-    def set_enabled(self, domain, comment, enabled):
-        self.denied[domain] = {**self.denied.get(domain, {}), "comment": comment, "enabled": enabled}
+    def set_enabled(self, domain, comment, enabled, kind="exact"):
+        target = self.regex if kind == "regex" else self.denied
+        target[domain] = {**target.get(domain, {}), "comment": comment, "enabled": enabled}
 
     def remove_deny(self, domain):
         self.denied.pop(domain, None)
@@ -65,7 +93,7 @@ class FakeFTL:
 
 def verdicts_for(batch, model, examples=None):
     return {d: {"domain": d, "category": "ads" if d.startswith("ads.") else "legitimate",
-                "confidence": 0.95, "reason": "test"} for d, _, _ in batch}
+                "confidence": 0.95, "reason": "test"} for d, *_ in batch}
 
 
 class IngestTest(unittest.TestCase):

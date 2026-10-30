@@ -13,6 +13,8 @@ AUTO_BLOCKED, FLAGGED, APPROVED, MANUAL_BLOCKED, UNBLOCKED, REJECTED = (
     "auto_blocked", "flagged", "approved", "user_blocked", "unblocked", "rejected")
 # An automatic block withdrawn during its trial period (safety.py).
 PROBATION_REVERTED = "probation_reverted"
+# Suggestions (suggestions.py): a block-list false positive allowed, a site-wide rule added or removed.
+LIST_ALLOWED, SITE_BLOCKED, SITE_UNBLOCKED = "list_allowed", "site_blocked", "site_unblocked"
 
 # How long the model's "this is fine" stands before the domain is reviewed again.
 # Flagged domains and the user's own decisions never expire on their own.
@@ -71,7 +73,20 @@ def _m4_policies_models(db):
         missed integer, seconds real, error text)""")
 
 
-MIGRATIONS = [_m1_base, _m2_provenance, _m3_probation, _m4_policies_models]
+def _m5_evidence_suggestions(db):
+    """Local evidence on verdicts (evidence.py); block-list checks and site rules (suggestions.py)."""
+    if "evidence" not in _columns(db, "verdicts"):
+        db.execute("alter table verdicts add column evidence text")
+    db.execute("""create table if not exists gravity_checks (
+        domain text primary key, category text, confidence real, reason text, lookups integer,
+        devices integer, clients text, lists text, status text, judged_at real, updated_at real)""")
+    db.execute("create index if not exists gravity_checks_status on gravity_checks (status, updated_at)")
+    db.execute("""create table if not exists site_rules (
+        site text primary key, regex text, blocked integer, added_at real)""")
+    db.execute("create table if not exists dismissed (kind text, key text, at real, primary key (kind, key))")
+
+
+MIGRATIONS = [_m1_base, _m2_provenance, _m3_probation, _m4_policies_models, _m5_evidence_suggestions]
 
 
 def open_db(path=None):

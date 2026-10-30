@@ -95,6 +95,29 @@ is required: a password-less admin UI is treated as signed out.
 | ![Accuracy](docs/screenshots/accuracy.png) | ![Kids-only blocks](docs/screenshots/decisions-device-policy.png) |
 | Accuracy | Blocks under a device policy |
 
+## Evidence, suggestions and notifications
+
+- **Evidence beyond the name.** With each domain the model also gets local signals from this
+  network's own query log: which devices looked it up, whether a device repeats it on a steady
+  clock (typical of telemetry and tracking beacons), and how often its lookups came right next
+  to lookups that were already blocked. They're hints, not rules, and they can mislead (a CDN
+  that loads alongside ads looks guilty by association), so watch the Accuracy page. A domain
+  seen for the very first time has only that one lookup; the rhythm shows up on re-reviews and
+  in Eco mode. Nothing is looked up on the internet.
+- **Second looks at your block lists.** A few domains your lists block are shown to the model
+  each hour (most-requested first, only while it's idle). Ones it calls legitimate (a login,
+  CDN or API) appear under **Suggestions** with the list responsible and an *Allow* button.
+- **Whole-site rules.** When three or more domains of one site are blocked, Suggestions offers
+  one regex rule for the site. Pause and undo cover these rules too.
+- **Notifications.** ntfy or a JSON webhook, for automatic blocks, a pile-up of approvals,
+  withdrawn trial blocks and suspected list mistakes; combined and sent at most every 5
+  minutes. Off until you enter an address.
+
+| | |
+|---|---|
+| ![Suggestions](docs/screenshots/suggestions.png) | ![Evidence](docs/screenshots/needs-approval-evidence.png) |
+| Suggestions | Evidence under the reason |
+
 ## Screenshots
 
 Taken from a test container filled with made-up data (`engine/tools/seed_demo.py`).
@@ -134,6 +157,21 @@ website and donation page) and `tools/check-branding.sh` fails if any are left. 
 is one generated commit at the top of the web fork's branch; see
 `web/KESTRELPRO-CHANGES.md` for the rebase procedure. The About page states the software's
 origin and links to the upstream project.
+
+## Status and open issues
+
+| Phase | State |
+|---|---|
+| P1 fork skeleton, P2 engine, P3 one UI and login | Done |
+| P4 migration of the live DNS | Ready; waiting for the go-ahead and the temporary IP to be confirmed |
+| P5 safety net and Query Log verdicts | Done |
+| P6 device policies, models, accuracy | Done |
+| P7 evidence, block-list second looks, site rules, notifications | Done (opt-in internet lookups such as RDAP not built) |
+| P8 LS per-device spoofing | Not built: it can't work as designed ([#2](https://github.com/amukherjee1991/kestrelpro/issues/2)) |
+| Laya as a fast, calibrated first-pass classifier | Later ([#1](https://github.com/amukherjee1991/kestrelpro/issues/1)) |
+
+CI: `engine-tests.yml` runs the engine tests on every push; `upstream-watch.yml` checks the
+pinned releases in `UPSTREAM.json` weekly and opens an issue when Pi-hole publishes newer ones.
 
 ## Engine
 

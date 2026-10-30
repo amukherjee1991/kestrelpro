@@ -1,0 +1,43 @@
+name: Upstream watch
+
+# Weekly: compare the pinned upstream releases (UPSTREAM.json) with the latest ones and open an
+# issue when there's something newer, so security fixes (mostly FTL) are picked up quickly.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare with the latest releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          body=""
+          for repo in $(jq -r 'keys[] | select(. != "comment")' UPSTREAM.json); do
+            pinned=$(jq -r --arg r "$repo" '.[$r]' UPSTREAM.json)
+            latest=$(gh api "repos/$repo/releases/latest" -q .tag_name)
+            if [ "$latest" != "$pinned" ]; then
+              body+="- **$repo**: pinned \`$pinned\`, latest [\`$latest\`](https://github.com/$repo/releases/tag/$latest)"$'\n'
+            fi
+          done
+          advisories=$(gh api "repos/pi-hole/FTL/security-advisories?per_page=5" \
+            -q '.[] | "- [\(.ghsa_id)](\(.html_url)) \(.severity): \(.summary) (\(.published_at[:10]))"' 2>/dev/null || true)
+          if [ -z "$body" ]; then
+            echo "All pinned upstream releases are current."
+            exit 0
+          fi
+          title="Upstream releases newer than the pinned ones"
+          if gh issue list --state open --search "in:title \"$title\"" --json number -q '.[0].number' | grep -q .; then
+            echo "An open issue already tracks this."
+            exit 0
+          fi
+          gh issue create --title "$title" --body "$(printf 'New upstream releases:\n\n%s\nRecent FTL security advisories:\n\n%s\n\nFTL-only changes need just a new pinned version and checksum in the docker fork; web and docker releases need the KestrelPro commits rebased (see web/KESTRELPRO-CHANGES.md). Target: patched image within 48 h of an upstream security release.\n' "$body" "${advisories:-none listed}")"

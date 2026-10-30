@@ -10,7 +10,7 @@ import time
 
 import requests
 
-from . import accuracy, classify, config, ftl as ftl_api, policies, policy, safety, store
+from . import accuracy, classify, config, evidence, ftl as ftl_api, notify, policies, policy, safety, store, suggestions
 
 log = logging.getLogger("kestrel.ingest")
 
@@ -33,6 +33,7 @@ class Ingest:
         self._allow = (0.0, set())
         self.storms = safety.StormWatch()
         self.directory = policies.Directory(ftl)
+        self.list_checks = suggestions.ListChecks(ftl)
         self._preflight_at = 0.0
 
     def wake(self):
@@ -85,16 +86,24 @@ class Ingest:
     def _enqueue(self, db, queries):
         s = store.get_settings(db)
         seen = {}
+        blocked = evidence.blocked_times(queries)
+        self.list_checks.collect(queries)
         for q in queries:
             if q.get("status") not in ftl_api.ALLOWED_STATUSES or not q.get("domain"):
                 continue
             d = q["domain"].lower().rstrip(".")
-            item = seen.setdefault(d, {"lookups": 0, "devices": {}})
+            item = seen.setdefault(d, {"lookups": 0, "devices": {}, "near_blocked": 0})
             item["lookups"] += 1
             ip = (q.get("client") or {}).get("ip") or "?"
+            t = q.get("time") or 0
             dev = item["devices"].setdefault(ip, {
-                "ip": ip, "name": q["client"].get("name"), "network": policy.network_of(ip), "lookups": 0})
+                "ip": ip, "name": q["client"].get("name"), "network": policy.network_of(ip), "lookups": 0,
+                "times": []})
             dev["lookups"] += 1
+            if len(dev["times"]) < evidence.MAX_TIMES:
+                dev["times"].append(t)
+            if evidence.near_blocked(blocked, ip, t):
+                item["near_blocked"] += 1
         if not seen:
             return
         allow = self._allowlist()
@@ -105,7 +114,7 @@ class Ingest:
             for d in candidates:
                 if d in done or d in self.inflight:
                     continue
-                q = self.queue.setdefault(d, {"lookups": 0, "devices": {}, "first_seen": now})
+                q = self.queue.setdefault(d, {"lookups": 0, "devices": {}, "near_blocked": 0, "first_seen": now})
                 _merge(q, seen[d])
             if len(self.queue) > MAX_QUEUE:
                 for d in sorted(self.queue, key=lambda d: _priority(self.queue[d]))[:len(self.queue) - MAX_QUEUE]:
@@ -127,22 +136,27 @@ class Ingest:
             self.inflight |= set(items)
         self.running = True
         try:
-            batch = [(d, it["lookups"], len(it["devices"])) for d, it in items.items()]
+            now = time.time()
+            for d, it in items.items():
+                evidence.add_history(self.ftl, d, it, now)
+            notes = {d: evidence.summarise(it) for d, it in items.items()}
+            batch = [(d, it["lookups"], len(it["devices"]), notes[d][1]) for d, it in items.items()]
             examples = accuracy.examples(db) if s["few_shot"] else None
             verdicts = classify.classify(batch, s["model"], examples=examples)
         except requests.RequestException:
             with self.lock:  # try these again once the model is back
                 for d, it in items.items():
-                    _merge(self.queue.setdefault(d, {"lookups": 0, "devices": {}, "first_seen": it["first_seen"]}), it)
+                    _merge(self.queue.setdefault(d, {"lookups": 0, "devices": {}, "near_blocked": 0,
+                                                     "first_seen": it["first_seen"]}), it)
             raise
         finally:
             self.running = False
             with self.lock:
                 self.inflight -= set(items)
-        self._record(db, s, items, verdicts, classify.prompt_version(examples))
+        self._record(db, s, items, verdicts, classify.prompt_version(examples), {d: n[0] for d, n in notes.items()})
         return len(items)
 
-    def _record(self, db, s, items, verdicts, prompt_version=classify.PROMPT_VERSION):
+    def _record(self, db, s, items, verdicts, prompt_version=classify.PROMPT_VERSION, notes=None):
         now = time.time()
         digest = classify.model_digest(s["model"])
         # Paused: nothing new is blocked, even in Automatic mode; suggestions wait for approval.
@@ -167,16 +181,21 @@ class Ingest:
                 block_groups = json.dumps(auto_groups)
             elif review_groups:
                 status = store.PENDING
-            clients = json.dumps(sorted(it["devices"].values(), key=lambda x: -x["lookups"]))
+            clients = json.dumps(sorted(({k: v for k, v in dev.items() if k != "times"}
+                                         for dev in it["devices"].values() if not dev.get("history_only")),
+                                        key=lambda x: -x["lookups"]))
+            ev = json.dumps((notes or {}).get(d) or {})
             db.execute("insert or replace into verdicts (domain, category, confidence, reason, status, queries, "
                        "devices, judged_at, updated_at, clients, expires_at, model, model_digest, prompt_version, "
-                       "probation_until, block_groups) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                       "probation_until, block_groups, evidence) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (d, v["category"], v["confidence"], v["reason"], status, it["lookups"], len(it["devices"]),
                         now, now, clients, None if flag else policy.expires_at(v, now),
-                        s["model"], digest, prompt_version, probation, block_groups))
+                        s["model"], digest, prompt_version, probation, block_groups, ev))
             if flag:
                 flagged += 1
                 log.info("%s %s (%s %.2f): %s", status.upper(), d, v["category"], v["confidence"], v["reason"])
+            if status == store.BLOCKED:
+                notify.add(db, "auto_blocked", f"{d}: {v['category']}, {round(v['confidence'] * 100)}% sure. {v['reason']}")
                 store.log_event(db, d, store.AUTO_BLOCKED if status == store.BLOCKED else store.FLAGGED,
                                 v["category"], v["confidence"], v["reason"], clients)
         db.commit()
@@ -231,6 +250,11 @@ class Ingest:
                 else:
                     self.poll(db)
                     self.flush(db)
+                # Second looks at block-list decisions only when the model has nothing else to do.
+                if not self.queue_length():
+                    self.list_checks.run(db, s)
+                notify.check_pending(db)
+                notify.flush(db)
                 store.set_state(db, "last_finished", time.time())
                 store.set_state(db, "last_error", "")
                 failures = 0
@@ -268,6 +292,10 @@ def _priority(item):
 
 def _merge(into, item):
     into["lookups"] += item["lookups"]
+    into["near_blocked"] = into.get("near_blocked", 0) + item.get("near_blocked", 0)
     for ip, dev in item["devices"].items():
-        mine = into["devices"].setdefault(ip, {**dev, "lookups": 0})
+        mine = into["devices"].setdefault(ip, {**dev, "lookups": 0, "times": []})
         mine["lookups"] += dev["lookups"]
+        room = evidence.MAX_TIMES - len(mine.setdefault("times", []))
+        if room > 0:
+            mine["times"].extend(dev.get("times", [])[:room])

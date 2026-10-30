@@ -11,12 +11,13 @@ Blocks the user made or approved never go on probation.
 Pause disables every KestrelPro entry in the deny list without deleting anything; resume
 re-enables them. While paused, Automatic mode queues suggestions instead of blocking.
 """
+import json
 import logging
 import time
 
 import requests
 
-from . import config, ftl as ftl_api, store
+from . import config, ftl as ftl_api, notify, store
 
 log = logging.getLogger("kestrel.safety")
 
@@ -59,6 +60,7 @@ def revert(ftl, db, domain, reason):
                     row["confidence"] if row else None, reason, row["clients"] if row else "[]")
     db.commit()
     log.info("probation: withdrew the block on %s (%s)", domain, reason)
+    notify.add(db, "probation_reverted", f"{domain}: block withdrawn, back to Needs approval ({reason})")
 
 
 def on_probation(db, now=None):
@@ -112,8 +114,13 @@ class StormWatch:
         return reverted
 
 
-def _mine(ftl):
-    return [e for e in ftl.list_domains("deny/exact") if (e.get("comment") or "").startswith(config.TAG)]
+def _mine(ftl, kinds=("exact", "regex")):
+    """KestrelPro's deny entries (exact domains and site-wide regex rules), tagged with their kind."""
+    out = []
+    for kind in kinds:
+        out += [{**e, "kind": kind} for e in ftl.list_domains(f"deny/{kind}")
+                if (e.get("comment") or "").startswith(config.TAG)]
+    return out
 
 
 def pause(ftl, db):
@@ -121,7 +128,7 @@ def pause(ftl, db):
     entries = _mine(ftl)
     for e in entries:
         if e.get("enabled", True):
-            ftl.set_enabled(e["domain"], e["comment"], False)
+            ftl.set_enabled(e["domain"], e["comment"], False, e["kind"])
     store.set_state(db, "paused", "1")
     store.set_state(db, "paused_at", time.time())
     log.info("paused: %d KestrelPro block(s) disabled", len(entries))
@@ -132,7 +139,7 @@ def resume(ftl, db):
     entries = _mine(ftl)
     for e in entries:
         if not e.get("enabled", True):
-            ftl.set_enabled(e["domain"], e["comment"], True)
+            ftl.set_enabled(e["domain"], e["comment"], True, e["kind"])
     store.set_state(db, "paused", "0")
     log.info("resumed: %d KestrelPro block(s) enabled", len(entries))
     return len(entries)
@@ -159,7 +166,7 @@ def broke(ftl, db, client_ip, minutes):
         if len(rows) < ftl_api.MAX_ROWS:
             break
         start += len(rows)
-    mine = {e["domain"]: e for e in _mine(ftl)}
+    mine = {e["domain"]: e for e in _mine(ftl, ("exact",))}
     out = []
     for d, h in hits.items():
         if d not in mine:
@@ -188,8 +195,9 @@ def explain(db, domains):
     for i in range(0, len(domains), 500):
         chunk = domains[i:i + 500]
         for r in db.execute("select domain, category, confidence, reason, status, model, judged_at, updated_at, "
-                            f"probation_until from verdicts where domain in ({','.join('?' * len(chunk))})", chunk):
-            out[r["domain"]] = dict(r)
+                            f"probation_until, evidence from verdicts where domain in ({','.join('?' * len(chunk))})",
+                            chunk):
+            out[r["domain"]] = {**dict(r), "evidence": json.loads(r["evidence"] or "{}")}
     return out
 
 

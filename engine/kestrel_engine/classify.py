@@ -11,7 +11,7 @@ log = logging.getLogger("kestrel.classify")
 
 CATEGORIES = ["ads", "tracking", "telemetry", "malicious", "legitimate", "unknown"]
 # Bump when SYSTEM_PROMPT or VERDICT_SCHEMA changes; stored on every verdict.
-PROMPT_VERSION = "2026-10-29.1"
+PROMPT_VERSION = "2026-10-30.1"
 
 SYSTEM_PROMPT = """You review DNS lookups from a home network's DNS ad blocker. \
 For each domain, decide what it is mainly used for:
@@ -26,7 +26,12 @@ The household relies on these domains working, so a wrong block costs more than 
 missed ad. Give high confidence only when you recognise the domain or its owner and \
 its purpose is clear. Domains that mix content with ads (e.g. a CDN or a first-party \
 API) are legitimate. Confidence is a whole-number percentage from 0 (a guess) to 100 (certain). \
-Keep each reason under 15 words."""
+Keep each reason under 15 words.
+
+Each domain may come with evidence from this network: which devices looked it up, whether a \
+device repeats it on a steady clock (common for telemetry and tracking beacons), and how often \
+its lookups came right next to lookups that were already blocked as ads or trackers. Treat this \
+as supporting evidence, not proof: a steady rhythm also fits weather, sync and update checks."""
 
 VERDICT_SCHEMA = {
     "type": "object",
@@ -86,7 +91,8 @@ def _system_prompt(examples):
 def classify(batch, model, examples=None):
     """batch: list of (domain, query_count, client_count). Returns {domain: verdict}.
     examples: {"blocked": [...], "kept": [...]} from accuracy.examples(), or None."""
-    rows = "\n".join(f"{d}\t{n} lookups\t{c} device(s)" for d, n, c in batch)
+    rows = "\n".join(f"{b[0]}\t{b[1]} lookups\t{b[2]} device(s)" + (f"\t{b[3]}" if len(b) > 3 and b[3] else "")
+                     for b in batch)
     r = requests.post(f"{config.OLLAMA_URL}/api/chat", timeout=900, json={
         "model": model,
         "stream": False,
@@ -109,7 +115,7 @@ def classify(batch, model, examples=None):
     except (json.JSONDecodeError, KeyError, TypeError):
         log.warning("model returned unparseable output; skipping batch")
         return {}
-    wanted = {d for d, _, _ in batch}
+    wanted = {b[0] for b in batch}
     out = {}
     for v in verdicts:
         if v.get("domain") not in wanted or v.get("category") not in CATEGORIES or not isinstance(v.get("confidence"), (int, float)):

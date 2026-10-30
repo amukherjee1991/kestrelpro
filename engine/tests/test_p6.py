@@ -272,7 +272,7 @@ class ModelsTest(Base):
         self.db.commit()
 
         def everything_is_ads(batch, model, examples=None):
-            return {d: {"domain": d, "category": "ads", "confidence": 0.99, "reason": "x"} for d, _, _ in batch}
+            return {d: {"domain": d, "category": "ads", "confidence": 0.99, "reason": "x"} for d, *_ in batch}
         with mock.patch.object(models.classify, "classify", side_effect=everything_is_ads):
             jobs.start_benchmark("small:4b")
             for _ in range(200):
@@ -287,7 +287,7 @@ class ModelsTest(Base):
 class MigrationTest(unittest.TestCase):
     def test_v4(self):
         db = store.open_db(os.path.join(tempfile.mkdtemp(), "m.db"))
-        self.assertEqual(store.get_state(db, "schema_version"), "4")
+        self.assertEqual(store.get_state(db, "schema_version"), str(len(store.MIGRATIONS)))
         self.assertIn("block_groups", {r[1] for r in db.execute("pragma table_info(verdicts)")})
         db.execute("select * from policies")
         db.execute("select * from benchmarks")
