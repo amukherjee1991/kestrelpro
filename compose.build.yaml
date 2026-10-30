@@ -1,0 +1,18 @@
+# Build the KestrelPro image from source instead of pulling it (development).
+# Needs the two forks next to this file:
+#   git clone -b kestrelpro/v6.6.1-k0 https://github.com/amukherjee1991/kestrelpro-web.git web
+#   git clone -b kestrelpro/2026.10.0-k0 https://github.com/amukherjee1991/kestrelpro-docker.git docker-pi-hole
+# Then:
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build
+services:
+  kestrelpro:
+    image: kestrelpro:dev
+    build:
+      context: ./docker-pi-hole/src
+      additional_contexts:
+        kestrelpro-web: ./web
+        kestrelpro-engine: ./engine
+      args:
+        CORE_BRANCH: v6.5
+        PADD_BRANCH: master
+        PIHOLE_DOCKER_TAG: kestrelpro-dev

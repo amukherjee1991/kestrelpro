@@ -28,7 +28,7 @@ checked its suggestions for a few days.
 3. Stop the old container and start KestrelPro; the gap is a few seconds and clients retry:
    ```bash
    docker stop pihole
-   docker compose up -d --build
+   docker compose up -d
    ```
 4. Check it: `dig @<this-host> example.com` resolves, a domain on your block lists returns
    `0.0.0.0`, and the admin UI (port `ADMIN_PORT`) shows **KestrelPro → AI review** in the menu.
@@ -38,15 +38,15 @@ never touched.
 
 ## From Pi-hole v5, or a Pi-hole installed without Docker (the usual Raspberry Pi install)
 
-On a Raspberry Pi, install Docker first (`curl -fsSL https://get.docker.com | sh`), then clone
-KestrelPro as in the README's quick start. Keep the model on another machine (see the README's
-Raspberry Pi section).
+On a Raspberry Pi, install Docker first (`curl -fsSL https://get.docker.com | sh`), then get the
+two files as in the README's quick start; the image has a Raspberry Pi version, so there's
+nothing to build. Keep the model on another machine (see the README's Raspberry Pi section).
 
 1. Export a Teleporter backup from the old admin UI (v5 backups are accepted by v6).
 2. Start KestrelPro with an empty `./etc-pihole` (or move the old install's port 53 first;
    see the next step).
 3. Stop the old Pi-hole (`sudo systemctl stop pihole-FTL` and disable it) so port 53 is free,
-   then `docker compose up -d --build`.
+   then `docker compose up -d`.
 4. In KestrelPro's admin UI: *Settings → Teleporter → Import* the backup.
 
 ## From the Kestrel add-on (a separate `kestrel` container next to Pi-hole)

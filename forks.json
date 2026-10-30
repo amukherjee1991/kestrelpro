@@ -1,0 +1,5 @@
+{
+  "comment": "The fork branches an image is built from (see docs/RELEASING.md).",
+  "web": {"repo": "amukherjee1991/kestrelpro-web", "ref": "kestrelpro/v6.6.1-k0"},
+  "docker": {"repo": "amukherjee1991/kestrelpro-docker", "ref": "kestrelpro/2026.10.0-k0"}
+}

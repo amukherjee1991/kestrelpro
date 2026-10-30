@@ -43,24 +43,25 @@ can't run a model the size that judges domains well, so the usual setup is:
 
 1. **KestrelPro on the Pi**, replacing Pi-hole (see [docs/MIGRATING.md](docs/MIGRATING.md)).
    In `.env`, remove `ollama` from `COMPOSE_PROFILES` and set `OLLAMA_URL` to the other machine.
+   The same image runs on the Pi; nothing to build.
 2. **Ollama on any computer with a GPU** on your network (`ollama serve` with
    `OLLAMA_HOST=0.0.0.0`), with the model pulled there.
 
 When that computer is off, KestrelPro keeps blocking with your lists and new domains wait
 until the model is back. On a Pi 5 with 8 GB you can also run a small model on the Pi itself
 in Eco mode; it's slow and less accurate, so benchmark it first. Building the image on the Pi
-takes a while the first time; `docker compose up -d --build` builds for the Pi's own
-architecture automatically.
+isn't needed: `docker compose up -d` pulls the Pi's version of the image.
 
 ## Quick start
 
-```bash
-git clone https://github.com/amukherjee1991/kestrelpro.git && cd kestrelpro
-git clone -b kestrelpro/v6.6.1-k0 https://github.com/amukherjee1991/kestrelpro-web.git web
-git clone -b kestrelpro/2026.10.0-k0 https://github.com/amukherjee1991/kestrelpro-docker.git docker-pi-hole
+You need only two files; the image is ready-made for PCs and Raspberry Pi.
 
-cp .env.example .env               # set ADMIN_PASSWORD (and TZ)
-docker compose up -d --build       # CPU; for a GPU add -f compose.nvidia.yaml or -f compose.amd.yaml
+```bash
+mkdir kestrelpro && cd kestrelpro
+curl -fsSLO https://raw.githubusercontent.com/amukherjee1991/kestrelpro/main/compose.yaml
+curl -fsSL https://raw.githubusercontent.com/amukherjee1991/kestrelpro/main/.env.example -o .env
+nano .env                          # set ADMIN_PASSWORD (and TZ)
+docker compose up -d               # with a GPU for the model: add -f compose.nvidia.yaml (or compose.amd.yaml)
 docker compose exec ollama ollama pull gemma4:12b
 ```
 
@@ -71,8 +72,14 @@ Then:
 3. Watch **KestrelPro → AI review** and **Needs approval** for a few days before you switch
    *AI settings* to Automatic.
 
+Updating: `docker compose pull && docker compose up -d`. Pin a version with
+`KESTRELPRO_VERSION` in `.env`.
+
 If `docker compose up` says port 53 is in use, or you're replacing an existing Pi-hole or the
 Kestrel add-on, see **[docs/MIGRATING.md](docs/MIGRATING.md)**.
+
+> The image and this repository are private while the release is prepared
+> ([docs/RELEASING.md](docs/RELEASING.md)); until then, `docker login ghcr.io` first.
 
 ### How the browser reaches the engine
 
@@ -198,7 +205,9 @@ and the high-contrast themes are left as upstream ships them.
 | `engine/` | The review engine (Python): query-log ingest, model calls, policies, safety net, API |
 | `web/` | Fork of pi-hole/web: admin UI, KestrelPro pages, skin, debranding ([kestrelpro-web](https://github.com/amukherjee1991/kestrelpro-web)) |
 | `docker-pi-hole/` | Fork of pi-hole/docker-pi-hole: image build, engine supervision ([kestrelpro-docker](https://github.com/amukherjee1991/kestrelpro-docker)) |
-| `compose*.yaml`, `.env.example` | How it's run |
+| `compose.yaml`, `.env.example` | How users run it (pulls the ready-made image) |
+| `compose.build.yaml`, `forks.json` | Building the image from source; which fork branches |
+| `tools/smoke-test.sh` | Boots an image and checks DNS, blocking, admin UI, engine |
 | `UPSTREAM.json` | Pinned upstream releases (FTL is also pinned by SHA-256 in the image build) |
 
 ```bash
@@ -213,8 +222,13 @@ How the pieces fit, the fork strategy, the security model and licensing:
 `web/tools/debrand.sh` (checked by `tools/check-branding.sh`); each fork lists its changes in
 `KESTRELPRO-CHANGES.md`.
 
-CI: `engine-tests.yml` runs the engine tests on every push; `upstream-watch.yml` checks the
-pinned releases weekly and opens an issue when Pi-hole publishes newer ones.
+Build from source: clone the two forks into `web/` and `docker-pi-hole/` (see
+`compose.build.yaml`), then `docker compose -f compose.yaml -f compose.build.yaml up -d --build`.
+
+CI: `engine-tests.yml` runs the engine tests on every push; `image.yml` builds and smoke-tests
+the image on every push and publishes it for PC and Raspberry Pi on a version tag
+([docs/RELEASING.md](docs/RELEASING.md)); `upstream-watch.yml` checks the pinned releases weekly
+and opens an issue when Pi-hole publishes newer ones.
 
 ## Roadmap
 

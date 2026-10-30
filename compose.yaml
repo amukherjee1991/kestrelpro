@@ -1,32 +1,21 @@
-# KestrelPro: DNS blocking with an AI second opinion.
+# KestrelPro: a Pi-hole replacement with AI review for the domains block lists miss.
 #
 #   cp .env.example .env          # set ADMIN_PASSWORD at least
-#   docker compose up -d --build
+#   docker compose up -d
 #   docker compose exec ollama ollama pull gemma4:12b
 #
+# The image runs on PCs (x86-64) and Raspberry Pi (64-bit and 32-bit OS).
 # Model server on a GPU (much faster; recommended):
-#   NVIDIA: docker compose -f compose.yaml -f compose.nvidia.yaml up -d --build
-#   AMD:    docker compose -f compose.yaml -f compose.amd.yaml up -d --build
-# Using an Ollama that runs elsewhere: set OLLAMA_URL and remove "ollama" from COMPOSE_PROFILES.
-#
-# Builds from the local forks next to this file:
-#   ./docker-pi-hole  (image build, start.sh, engine supervision)
-#   ./web             (admin UI)
-#   ./engine          (the review engine)
+#   NVIDIA: docker compose -f compose.yaml -f compose.nvidia.yaml up -d
+#   AMD:    docker compose -f compose.yaml -f compose.amd.yaml up -d
+# Using an Ollama that runs elsewhere (the usual Raspberry Pi setup): set OLLAMA_URL and
+# remove "ollama" from COMPOSE_PROFILES in .env.
+# Building the image from source instead: see compose.build.yaml.
 name: kestrelpro
 
 services:
   kestrelpro:
-    build:
-      context: ./docker-pi-hole/src
-      additional_contexts:
-        kestrelpro-web: ./web
-        kestrelpro-engine: ./engine
-      args:
-        CORE_BRANCH: v6.5
-        PADD_BRANCH: master
-        PIHOLE_DOCKER_TAG: kestrelpro-2026.10.0
-    image: kestrelpro:2026.10.0
+    image: ghcr.io/amukherjee1991/kestrelpro:${KESTRELPRO_VERSION:-latest}
     container_name: ${CONTAINER_NAME:-kestrelpro}
     restart: unless-stopped
     ports:
