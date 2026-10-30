@@ -1,60 +1,102 @@
 # KestrelPro
 
-DNS blocking with an AI second opinion: a fork of Pi-hole® v6 with the Kestrel review
-engine built in. New domains are judged by a local model (Ollama) within seconds;
-nothing leaves the network. See [PLAN_LS.md](PLAN_LS.md) for the design.
+**A drop-in replacement for your Pi-hole® that also catches what the block lists miss.**
+KestrelPro keeps doing everything your Pi-hole does (same lists, same settings, runs on the same
+Raspberry Pi) and adds a language model, running on your own hardware, that looks at every new
+domain your devices use and blocks the ads, trackers and malicious domains that aren't on any
+list yet. Nothing is sent to the cloud.
 
 ![AI review overview](docs/screenshots/ai-review-overview.png)
+
+- **One appliance, one login.** A fork of Pi-hole® v6 with the review engine built in and its
+  pages in the admin UI.
+- **Careful by default.** Suggestions wait for your approval until you switch to Automatic;
+  automatic blocks go on a trial period, one click pauses them all, and every decision can be
+  undone.
+- **Measured, not trusted.** Your own Block / Don't block decisions grade the model, compare
+  models, and can teach it.
+- **Per device.** Different rules for different groups of devices (kids' tablets, work laptops).
 
 KestrelPro is a modified version of Pi-hole software (EUPL-1.2). Pi-hole is a registered
 trademark of Pi-hole, LLC. KestrelPro is not affiliated with or endorsed by Pi-hole, LLC.
 
-## Layout
+## Requirements
 
-| Path | What | Branch |
+- A Linux machine with **Docker** and Docker Compose v2 that your devices can reach on port 53:
+  a Raspberry Pi (64-bit or 32-bit Raspberry Pi OS) or any x86-64 PC or server.
+- **An Ollama model server** for the AI review: bundled in the compose file, or any Ollama on
+  your network. KestrelPro keeps blocking with your lists when the model is unavailable.
+
+| Where the model runs | Suggested model | Review speed |
 |---|---|---|
-| `docker-pi-hole/` | Fork of pi-hole/docker-pi-hole: image build, `start.sh`, engine supervision | `kestrelpro/2026.10.0-k0` |
-| `web/` | Fork of pi-hole/web: the admin UI with the KestrelPro pages, debranded | `kestrelpro/v6.6.1-k0` |
-| `engine/` | The review engine (Python): cursor ingest, micro-batches, verdict cache | this repo |
-| `compose.yaml` | The product: `kestrelpro` + optional bundled `ollama` | |
+| A PC or server with an NVIDIA or AMD GPU, 8 GB+ | `gemma4:12b` (default, ~8 GB) | seconds per batch: real-time mode |
+| A CPU-only PC, or a small GPU | a 3–4B model | a few minutes per batch: Eco mode (`CADENCE=eco`) |
+| On the Raspberry Pi itself (Pi 5, 8 GB) | a 1–3B model | slow: Eco mode; check its accuracy first |
 
-The two forks are separate git repos with an `upstream` remote; they are not pushed anywhere yet.
+Any Ollama model with structured JSON output works. Compare candidates on the **Models** page:
+*Benchmark* grades each against your own Block / Don't block decisions.
 
-Pinned upstream: docker-pi-hole 2026.10.0, web v6.6.1, core v6.5, FTL v6.8
-(SHA-256 `1f511e70…2b0e`, checked at build time).
+### On a Raspberry Pi
 
-## Build and run
+The Pi easily runs DNS, the block lists and KestrelPro's engine (a small Python process). It
+can't run a model the size that judges domains well, so the usual setup is:
+
+1. **KestrelPro on the Pi**, replacing Pi-hole (see [docs/MIGRATING.md](docs/MIGRATING.md)).
+   In `.env`, remove `ollama` from `COMPOSE_PROFILES` and set `OLLAMA_URL` to the other machine.
+2. **Ollama on any computer with a GPU** on your network (`ollama serve` with
+   `OLLAMA_HOST=0.0.0.0`), with the model pulled there.
+
+When that computer is off, KestrelPro keeps blocking with your lists and new domains wait
+until the model is back. On a Pi 5 with 8 GB you can also run a small model on the Pi itself
+in Eco mode; it's slow and less accurate, so benchmark it first. Building the image on the Pi
+takes a while the first time; `docker compose up -d --build` builds for the Pi's own
+architecture automatically.
+
+## Quick start
 
 ```bash
-cp .env.example .env          # edit
-docker compose up -d --build
+git clone https://github.com/amukherjee1991/kestrelpro.git && cd kestrelpro
+git clone -b kestrelpro/v6.6.1-k0 https://github.com/amukherjee1991/kestrelpro-web.git web
+git clone -b kestrelpro/2026.10.0-k0 https://github.com/amukherjee1991/kestrelpro-docker.git docker-pi-hole
+
+cp .env.example .env               # set ADMIN_PASSWORD (and TZ)
+docker compose up -d --build       # CPU; for a GPU add -f compose.nvidia.yaml or -f compose.amd.yaml
 docker compose exec ollama ollama pull gemma4:12b
 ```
 
-Open the admin UI on `ADMIN_PORT` (8080) and choose **KestrelPro → AI review** in the menu.
-There is one login: the admin UI's. The pages call the engine with that session.
+Then:
+
+1. Open the admin UI at `http://<host>:8080/admin/` and sign in with `ADMIN_PASSWORD`.
+2. Point your devices at the host for DNS. The usual way is your router's DHCP settings.
+3. Watch **KestrelPro → AI review** and **Needs approval** for a few days before you switch
+   *AI settings* to Automatic.
+
+If `docker compose up` says port 53 is in use, or you're replacing an existing Pi-hole or the
+Kestrel add-on, see **[docs/MIGRATING.md](docs/MIGRATING.md)**.
 
 ### How the browser reaches the engine
 
-- **Default (no proxy):** the pages call the engine on the same host at `KESTREL_ENGINE_PORT`
-  (8090). The container adds that port to the admin UI's Content-Security-Policy on start-up.
-  This needs plain HTTP: a page served over HTTPS can't call an HTTP engine.
+- **Default:** the KestrelPro pages call the engine on the same host at `KESTREL_ENGINE_PORT`
+  (8090); the container allows that in the admin UI's Content-Security-Policy on start-up.
+  This needs plain HTTP, because a page served over HTTPS can't call an HTTP engine.
 - **Behind a reverse proxy (recommended with HTTPS):** route `/admin/api/kestrel/*` to the
-  engine (port 8090 in the container) and everything else to the admin UI, then set
-  `KESTREL_ENGINE_URL=/admin/api/kestrel`. Example for Caddy:
+  engine and everything else to the admin UI, then set `KESTREL_ENGINE_URL=/admin/api/kestrel`.
+  For example, with Caddy:
 
   ```caddyfile
   dns.example.lan {
-      reverse_proxy /admin/api/kestrel/* 192.168.1.53:8090
-      reverse_proxy 192.168.1.53:8080
+      reverse_proxy /admin/api/kestrel/* kestrelpro-host:8090
+      reverse_proxy kestrelpro-host:8080
   }
   ```
 
-The engine accepts a request only with a live admin-UI session (`sid` cookie, checked with
-FTL and cached for 10 s); changes also need that session's CSRF token. An admin password
-is required: a password-less admin UI is treated as signed out.
+The engine accepts a request only with a live admin-UI session (checked with the DNS server,
+cached for 10 s), and changes also need that session's CSRF token. The admin UI must have a
+password.
 
-## Safety net
+## Features
+
+### Safety net
 
 - **Trial period.** A new automatic block is on trial for 24 h. It is withdrawn (back to
   *Needs approval*) if you unblock another domain of the same site, or if two or more devices
@@ -72,7 +114,7 @@ is required: a password-less admin UI is treated as signed out.
 | ![Query Log](docs/screenshots/querylog-ai-explanation.png) | ![Something broke?](docs/screenshots/something-broke.png) |
 | AI verdict in the Query Log | Something broke? |
 
-## Device policies, models and accuracy
+### Device policies, models and accuracy
 
 - **Device policies.** Give a group of devices (Group Management → Clients) its own rules:
   same as AI settings, Review first, Automatic or Off, with its own threshold and kinds of
@@ -95,7 +137,7 @@ is required: a password-less admin UI is treated as signed out.
 | ![Accuracy](docs/screenshots/accuracy.png) | ![Kids-only blocks](docs/screenshots/decisions-device-policy.png) |
 | Accuracy | Blocks under a device policy |
 
-## Evidence, suggestions and notifications
+### Evidence, suggestions and notifications
 
 - **Evidence beyond the name.** With each domain the model also gets local signals from this
   network's own query log: which devices looked it up, whether a device repeats it on a steady
@@ -133,7 +175,7 @@ Taken from a test container filled with made-up data (`engine/tools/seed_demo.py
 
 All screenshots are in [docs/screenshots/](docs/screenshots/), including phone layouts.
 
-## Design
+### The look
 
 The whole admin UI, not only the KestrelPro pages, uses one modern skin
 (`web/style/kestrelpro.css`, dark tokens in `kestrelpro-dark.css`): neutral surfaces, the
@@ -149,38 +191,34 @@ and the high-contrast themes are left as upstream ships them.
 | ![Domains](docs/screenshots/domains-dark.png) | ![System settings](docs/screenshots/settings-system-dark.png) |
 | Domains (dark) | System settings (dark) |
 
-## Debranding
+## Development
 
-Pi-hole's trademark rules forbid redistributing the software with its marks. In `web/`,
-`tools/debrand.sh` replaces them (logo, favicons, name in titles and text, links to Pi-hole's
-website and donation page) and `tools/check-branding.sh` fails if any are left. The result
-is one generated commit at the top of the web fork's branch; see
-`web/KESTRELPRO-CHANGES.md` for the rebase procedure. The About page states the software's
-origin and links to the upstream project.
-
-## Status and open issues
-
-| Phase | State |
+| Path | What |
 |---|---|
-| P1 fork skeleton, P2 engine, P3 one UI and login | Done |
-| P4 migration of the live DNS | Ready; waiting for the go-ahead and the temporary IP to be confirmed |
-| P5 safety net and Query Log verdicts | Done |
-| P6 device policies, models, accuracy | Done |
-| P7 evidence, block-list second looks, site rules, notifications | Done (opt-in internet lookups such as RDAP not built) |
-| P8 LS per-device spoofing | Not built: it can't work as designed ([#2](https://github.com/amukherjee1991/kestrelpro/issues/2)) |
-| Laya as a fast, calibrated first-pass classifier | Later ([#1](https://github.com/amukherjee1991/kestrelpro/issues/1)) |
-
-CI: `engine-tests.yml` runs the engine tests on every push; `upstream-watch.yml` checks the
-pinned releases in `UPSTREAM.json` weekly and opens an issue when Pi-hole publishes newer ones.
-
-## Engine
+| `engine/` | The review engine (Python): query-log ingest, model calls, policies, safety net, API |
+| `web/` | Fork of pi-hole/web: admin UI, KestrelPro pages, skin, debranding ([kestrelpro-web](https://github.com/amukherjee1991/kestrelpro-web)) |
+| `docker-pi-hole/` | Fork of pi-hole/docker-pi-hole: image build, engine supervision ([kestrelpro-docker](https://github.com/amukherjee1991/kestrelpro-docker)) |
+| `compose*.yaml`, `.env.example` | How it's run |
+| `UPSTREAM.json` | Pinned upstream releases (FTL is also pinned by SHA-256 in the image build) |
 
 ```bash
-cd engine
-python -m unittest discover -s tests -t .
-docker exec kestrelpro sh -c 'cd /opt/kestrel-engine && su-exec kestrel:pihole python3 -m kestrel_engine report'   # once | undo | pause | resume
+cd engine && python -m unittest discover -s tests -t .      # engine tests
+# engine/tools/seed_demo.py fills a *test* container with made-up data (see its docstring)
+docker exec kestrelpro sh -c 'cd /opt/kestrel-engine && su-exec kestrel:pihole python3 -m kestrel_engine report'
+# also: once | undo | pause | resume
 ```
 
-The engine signs in to FTL with its CLI password (`/etc/pihole/cli_pw`), which can manage
-lists but not change settings. Its database is `/etc/kestrel/kestrel.db`; a `kestrel.db`
-from the old add-on is migrated in place on first start.
+How the pieces fit, the fork strategy, the security model and licensing:
+**[docs/DESIGN.md](docs/DESIGN.md)**. Pi-hole's marks are removed from the UI by
+`web/tools/debrand.sh` (checked by `tools/check-branding.sh`); each fork lists its changes in
+`KESTRELPRO-CHANGES.md`.
+
+CI: `engine-tests.yml` runs the engine tests on every push; `upstream-watch.yml` checks the
+pinned releases weekly and opens an issue when Pi-hole publishes newer ones.
+
+## Roadmap
+
+- Opt-in internet evidence (RDAP/WHOIS registration age) for the model.
+- A fast, calibrated first-pass classifier in front of the model ([#1](https://github.com/amukherjee1991/kestrelpro/issues/1)).
+- Location privacy: the planned per-device location spoofing can't work as designed;
+  alternatives are open for decision ([#2](https://github.com/amukherjee1991/kestrelpro/issues/2)).

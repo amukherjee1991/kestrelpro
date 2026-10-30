@@ -1,0 +1,8 @@
+# AMD GPU (ROCm) for the bundled model server. Use with:
+#   docker compose -f compose.yaml -f compose.amd.yaml up -d --build
+services:
+  ollama:
+    image: ollama/ollama:0.40.13-rocm
+    devices:
+      - /dev/kfd
+      - /dev/dri

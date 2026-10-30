@@ -230,7 +230,8 @@ def create_app(ftl, worker, jobs=None):
     @api.route("/settings", methods=["GET", "POST"])
     def settings():
         if request.method == "GET":
-            return jsonify({**store.get_settings(db()), "protected_builtin": sorted(policy.PROTECTED_BUILTIN)})
+            return jsonify({**store.get_settings(db()), "protected_builtin": sorted(policy.PROTECTED_BUILTIN),
+                            "vpn_subnets": [str(n) for n in config.VPN_SUBNETS]})
         body = request.get_json(force=True)
         changes = {}
         if body.get("mode") in ("auto", "review"):

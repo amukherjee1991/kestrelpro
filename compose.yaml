@@ -1,12 +1,18 @@
 # KestrelPro: DNS blocking with an AI second opinion.
-#   cp .env.example .env    # then edit
+#
+#   cp .env.example .env          # set ADMIN_PASSWORD at least
 #   docker compose up -d --build
 #   docker compose exec ollama ollama pull gemma4:12b
 #
+# Model server on a GPU (much faster; recommended):
+#   NVIDIA: docker compose -f compose.yaml -f compose.nvidia.yaml up -d --build
+#   AMD:    docker compose -f compose.yaml -f compose.amd.yaml up -d --build
+# Using an Ollama that runs elsewhere: set OLLAMA_URL and remove "ollama" from COMPOSE_PROFILES.
+#
 # Builds from the local forks next to this file:
-#   ./docker-pi-hole  branch kestrelpro/2026.10.0-k0   (image build, start.sh, engine supervision)
-#   ./web             branch kestrelpro/v6.6.1-k0      (admin UI)
-#   ./engine          the review engine
+#   ./docker-pi-hole  (image build, start.sh, engine supervision)
+#   ./web             (admin UI)
+#   ./engine          (the review engine)
 name: kestrelpro
 
 services:
@@ -19,27 +25,29 @@ services:
       args:
         CORE_BRANCH: v6.5
         PADD_BRANCH: master
-        PIHOLE_DOCKER_TAG: kestrelpro-2026.10.0-k0
-    image: kestrelpro:2026.10.0-k0
+        PIHOLE_DOCKER_TAG: kestrelpro-2026.10.0
+    image: kestrelpro:2026.10.0
     container_name: ${CONTAINER_NAME:-kestrelpro}
     restart: unless-stopped
     ports:
-      - "${LAN_DNS_IP:?set LAN_DNS_IP in .env}:53:53/tcp"
-      - "${LAN_DNS_IP}:53:53/udp"
-      - "${VPN_DNS_IP:?set VPN_DNS_IP in .env}:53:53/tcp"
-      - "${VPN_DNS_IP}:53:53/udp"
+      # DNS on every address of this host by default; set DNS_BIND_IP to one address to limit it.
+      - "${DNS_BIND_IP:-0.0.0.0}:53:53/tcp"
+      - "${DNS_BIND_IP:-0.0.0.0}:53:53/udp"
       - "${ADMIN_PORT:-8080}:80/tcp"
-      # Engine API, called by the KestrelPro pages in the admin UI (not needed behind a reverse proxy)
+      # Engine API for the KestrelPro pages (not needed behind a reverse proxy, see README)
       - "${KESTREL_ENGINE_PORT:-8090}:8090/tcp"
     env_file: .env
     environment:
+      FTLCONF_webserver_api_password: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env (the admin UI needs a password)}
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+    # Uncomment to let KestrelPro be the network's DHCP server (also publish 67/udp):
+    # cap_add:
+    #   - NET_ADMIN
     volumes:
       - ./etc-pihole:/etc/pihole
       - ./etc-kestrel:/etc/kestrel
 
-  # Bundled model server. To use an Ollama elsewhere, set OLLAMA_URL and drop
-  # "ollama" from COMPOSE_PROFILES in .env.
+  # Bundled model server (CPU unless a GPU file is added, see the top of this file).
   ollama:
     profiles: [ollama]
     image: ollama/ollama:0.40.13
@@ -47,10 +55,3 @@ services:
     restart: unless-stopped
     volumes:
       - ${OLLAMA_DATA:-./ollama}:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]

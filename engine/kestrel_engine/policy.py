@@ -8,15 +8,22 @@ from . import config, policies, safety, store
 
 # Never auto-block these or anything under them; a false positive here breaks
 # logins, updates or core apps. Users add more via the dashboard.
+# Kept to logins, OS and software updates, app stores, messaging and the big CDNs: things
+# whose loss breaks a household quickly. Anything else belongs in the user's own list.
 PROTECTED_BUILTIN = {
+    # Apple, Google, Microsoft: sign-in, updates, app stores
     "apple.com", "icloud.com", "mzstatic.com", "apple-cloudkit.com", "cdn-apple.com",
     "google.com", "googleapis.com", "gstatic.com", "youtube.com", "googlevideo.com", "ytimg.com",
     "microsoft.com", "microsoftonline.com", "live.com", "office.com", "office.net", "windows.com",
     "windowsupdate.com", "msftconnecttest.com", "azureedge.net",
-    "github.com", "githubusercontent.com", "codeberg.org", "docker.io", "docker.com", "pypi.org",
-    "ubuntu.com", "canonical.com", "zorin.com", "zorinos.com", "flathub.org", "snapcraft.io",
-    "whatsapp.com", "whatsapp.net", "discord.com", "discord.gg", "zoom.us",
-    "anthropic.com", "claude.ai", "cloudflare.com", "akamaized.net", "fastly.net", "amazonaws.com",
+    # Linux and software updates, developer infrastructure
+    "ubuntu.com", "canonical.com", "debian.org", "fedoraproject.org", "archlinux.org",
+    "flathub.org", "snapcraft.io", "github.com", "githubusercontent.com", "docker.io", "docker.com",
+    "pypi.org",
+    # Messaging and calls
+    "whatsapp.com", "whatsapp.net", "signal.org", "discord.com", "discord.gg", "zoom.us",
+    # CDNs and cloud
+    "cloudflare.com", "akamaized.net", "fastly.net", "amazonaws.com",
 }
 
 # Local names plus the reserved test TLDs (RFC 2606/6761), e.g. Chrome's
@@ -26,9 +33,10 @@ LOCAL_SUFFIXES = (".lan", ".local", ".arpa", ".home", ".internal", ".invalid", "
 
 def network_of(ip):
     try:
-        return "vpn" if ipaddress.ip_address(ip) in config.VPN_SUBNET else "home"
+        addr = ipaddress.ip_address(ip)
     except ValueError:
         return "home"
+    return "vpn" if any(addr.version == n.version and addr in n for n in config.VPN_SUBNETS) else "home"
 
 
 def is_protected(domain, extra=()):

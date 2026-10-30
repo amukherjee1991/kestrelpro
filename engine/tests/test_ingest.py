@@ -1,3 +1,4 @@
+import ipaddress
 import os
 import tempfile
 import time
@@ -7,7 +8,7 @@ from unittest import mock
 
 import requests
 
-from kestrel_engine import ingest, store
+from kestrel_engine import config, ingest, store
 
 
 class FakeFTL:
@@ -127,6 +128,17 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(self.ing.poll(self.db), 1)
         self.assertEqual(int(store.get_state(self.db, "ingest_hw")), 1)  # the new top ID
 
+    def test_vpn_labelling_is_opt_in(self):
+        from kestrel_engine import policy
+        with mock.patch.object(config, "VPN_SUBNETS", []):
+            self.assertEqual(policy.network_of("10.8.0.2"), "home")
+        with mock.patch.object(config, "VPN_SUBNETS", [ipaddress.ip_network("10.8.0.0/24"),
+                                                       ipaddress.ip_network("fd00:8::/64")]):
+            self.assertEqual(policy.network_of("10.8.0.2"), "vpn")
+            self.assertEqual(policy.network_of("fd00:8::5"), "vpn")
+            self.assertEqual(policy.network_of("192.168.1.5"), "home")
+            self.assertEqual(policy.network_of("not-an-ip"), "home")
+
     def test_skips_blocked_local_protected_allowlisted_and_decided(self):
         self.ftl.allowed.add("ok.example.net")
         self.db.execute("insert into verdicts (domain, status, judged_at, updated_at) values ('seen.example.net', 'allowed', 0, 0)")
@@ -170,6 +182,7 @@ class IngestTest(unittest.TestCase):
             self.ing.flush(self.db, force=True)
         self.assertEqual(set(self.ftl.denied), {"ads.example.org"})
 
+    @mock.patch.object(config, "VPN_SUBNETS", [ipaddress.ip_network("10.8.0.0/24")])
     def test_model_failure_requeues_batch(self):
         self.ftl.add("x.example.org", ip="10.8.0.2")
         self.ing.poll(self.db)

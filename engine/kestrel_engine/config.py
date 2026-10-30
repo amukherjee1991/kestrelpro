@@ -15,8 +15,11 @@ CLI_PW_PATH = os.environ.get("FTL_CLI_PW", "/etc/pihole/cli_pw")
 FTL_PASSWORD = os.environ.get("FTL_PASSWORD") or os.environ.get("PIHOLE_PASSWORD") or ""
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434").rstrip("/")
 DB_PATH = os.environ.get("DB_PATH", "/etc/kestrel/kestrel.db")
-# Devices in this range are VPN (WireGuard) clients; everything else is the home network.
-VPN_SUBNET = ipaddress.ip_network(os.environ.get("VPN_SUBNET", "10.8.0.0/24"))
+# Optional: address ranges of VPN clients (e.g. a WireGuard subnet), comma-separated, so the UI
+# can tell "away from home" lookups apart. Empty: every device counts as on the local network.
+# VPN_SUBNET (one range) is still accepted for configurations from the old add-on.
+VPN_SUBNETS = [ipaddress.ip_network(n.strip(), strict=False)
+               for n in (os.environ.get("VPN_SUBNETS") or os.environ.get("VPN_SUBNET") or "").split(",") if n.strip()]
 API_HOST = os.environ.get("ENGINE_HOST", "0.0.0.0")
 API_PORT = int(os.environ.get("ENGINE_PORT", "8090"))
 # Same path as the reverse-proxy route, so the admin UI's pages work either way.

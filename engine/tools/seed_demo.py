@@ -56,8 +56,8 @@ STATUS_EVENT = {"blocked": store.AUTO_BLOCKED, "user_blocked": store.MANUAL_BLOC
 def seed(db, ftl):
     for i, (domain, cat, conf, reason, status) in enumerate(SAMPLES):
         who = random.sample(HOME, random.randint(1, 3)) + (random.sample(VPN, 1) if i % 3 == 0 else [])
-        clients = [{"ip": ip, "name": name, "network": policy.network_of(ip), "lookups": random.randint(2, 60)}
-                   for ip, name in who]
+        clients = [{"ip": ip, "name": name, "network": "vpn" if (ip, name) in VPN else "home",
+                    "lookups": random.randint(2, 60)} for ip, name in who]
         clients.sort(key=lambda c: -c["lookups"])
         at = NOW - random.uniform(0.2, 6.5) * 86400 if i > 4 else NOW - random.uniform(600, 20000)
         verdict = {"category": cat, "confidence": conf, "reason": reason}
