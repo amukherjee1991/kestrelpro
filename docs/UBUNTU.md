@@ -113,10 +113,6 @@ In `.env`, set at least:
 - `ADMIN_PASSWORD=`: the admin UI password (required).
 - `TZ=`: your time zone, e.g. `Europe/Berlin` (`timedatectl` shows the machine's).
 
-> While the image is private ([RELEASING.md](RELEASING.md)), sign in to the registry first with
-> a GitHub token that has the `read:packages` scope:
-> `docker login ghcr.io -u <your-github-user>`.
-
 Then choose where the AI model runs:
 
 | This machine has | Do this |

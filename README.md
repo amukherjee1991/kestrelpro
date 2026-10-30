@@ -82,9 +82,6 @@ firewall, step by step.
 If `docker compose up` says port 53 is in use, or you're replacing an existing Pi-hole or the
 Kestrel add-on, see **[docs/MIGRATING.md](docs/MIGRATING.md)**.
 
-> The image and this repository are private while the release is prepared
-> ([docs/RELEASING.md](docs/RELEASING.md)); until then, `docker login ghcr.io` first.
-
 ### How the browser reaches the engine
 
 - **Default:** the KestrelPro pages call the engine on the same host at `KESTREL_ENGINE_PORT`

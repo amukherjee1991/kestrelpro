@@ -42,16 +42,12 @@ tools/smoke-test.sh kestrelpro:arm64 linux/arm64      # needs QEMU/binfmt, e.g. 
 
 ## Who can pull the image
 
-Images in the GitHub container registry start **private**: only you (and people you add) can
-pull them, after `docker login ghcr.io`. Keep it that way until the open items in
-`docs/DESIGN.md` (*Licensing and names*) are settled, because publishing the image is
-distribution:
+The image, this repository and both forks are public, so anyone can pull
+`ghcr.io/amukherjee1991/kestrelpro` without signing in. A new package in the GitHub container
+registry starts **private**; if a release ever creates one, make it public in GitHub →
+*Packages → kestrelpro → Package settings → Change visibility*.
 
-- the source of each image must be public (EUPL-1.2): make this repository and both forks
-  public first, or publish the matching sources alongside each release;
-- Pi-hole LLC's confirmation that the internal `pihole` names in an unmodified FTL are acceptable;
-- a trademark check on the KestrelPro name;
-- remove the old planning notes from this repository's git history before making it public.
-
-Then: GitHub → *Packages → kestrelpro → Package settings → Change visibility → Public*, and
-the README's quick start works for anyone.
+Publishing the image distributes Pi-hole-derived code (EUPL-1.2): keep the forks public and
+each release's sources tagged. Still open (see `docs/DESIGN.md`, *Licensing and names*):
+Pi-hole LLC's confirmation that the internal `pihole` names in an unmodified FTL are
+acceptable, and a trademark check on the KestrelPro name.
