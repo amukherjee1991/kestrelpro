@@ -4,6 +4,8 @@ DNS blocking with an AI second opinion: a fork of Pi-hole® v6 with the Kestrel 
 engine built in. New domains are judged by a local model (Ollama) within seconds;
 nothing leaves the network. See [PLAN_LS.md](PLAN_LS.md) for the design.
 
+![AI review overview](docs/screenshots/ai-review-overview.png)
+
 KestrelPro is a modified version of Pi-hole software (EUPL-1.2). Pi-hole is a registered
 trademark of Pi-hole, LLC. KestrelPro is not affiliated with or endorsed by Pi-hole, LLC.
 
@@ -12,7 +14,7 @@ trademark of Pi-hole, LLC. KestrelPro is not affiliated with or endorsed by Pi-h
 | Path | What | Branch |
 |---|---|---|
 | `docker-pi-hole/` | Fork of pi-hole/docker-pi-hole: image build, `start.sh`, engine supervision | `kestrelpro/2026.10.0-k0` |
-| `web/` | Fork of pi-hole/web: the admin UI (unchanged so far; KestrelPro pages arrive in P3) | `kestrelpro/v6.6.1-k0` |
+| `web/` | Fork of pi-hole/web: the admin UI with the KestrelPro pages, debranded | `kestrelpro/v6.6.1-k0` |
 | `engine/` | The review engine (Python): cursor ingest, micro-batches, verdict cache | this repo |
 | `compose.yaml` | The product: `kestrelpro` + optional bundled `ollama` | |
 
@@ -29,7 +31,52 @@ docker compose up -d --build
 docker compose exec ollama ollama pull gemma4:12b
 ```
 
-The admin UI is on `ADMIN_PORT` (8080); the interim engine dashboard is on 8090 until P3.
+Open the admin UI on `ADMIN_PORT` (8080) and choose **KestrelPro → AI review** in the menu.
+There is one login: the admin UI's. The pages call the engine with that session.
+
+### How the browser reaches the engine
+
+- **Default (no proxy):** the pages call the engine on the same host at `KESTREL_ENGINE_PORT`
+  (8090). The container adds that port to the admin UI's Content-Security-Policy on start-up.
+  This needs plain HTTP: a page served over HTTPS can't call an HTTP engine.
+- **Behind a reverse proxy (recommended with HTTPS):** route `/admin/api/kestrel/*` to the
+  engine (port 8090 in the container) and everything else to the admin UI, then set
+  `KESTREL_ENGINE_URL=/admin/api/kestrel`. Example for Caddy:
+
+  ```caddyfile
+  dns.example.lan {
+      reverse_proxy /admin/api/kestrel/* 192.168.1.53:8090
+      reverse_proxy 192.168.1.53:8080
+  }
+  ```
+
+The engine accepts a request only with a live admin-UI session (`sid` cookie, checked with
+FTL and cached for 10 s); changes also need that session's CSRF token. An admin password
+is required: a password-less admin UI is treated as signed out.
+
+## Screenshots
+
+Taken from a test container filled with made-up data (`engine/tools/seed_demo.py`).
+
+| | |
+|---|---|
+| ![Needs approval](docs/screenshots/needs-approval.png) | ![Decisions](docs/screenshots/decisions-blocked.png) |
+| Needs approval | Decisions |
+| ![History](docs/screenshots/history.png) | ![AI settings](docs/screenshots/ai-settings.png) |
+| History | AI settings |
+| ![Dark theme](docs/screenshots/ai-review-overview-dark.png) | ![Login](docs/screenshots/login.png) |
+| Dark theme | Sign-in |
+
+All screenshots are in [docs/screenshots/](docs/screenshots/), including phone layouts.
+
+## Debranding
+
+Pi-hole's trademark rules forbid redistributing the software with its marks. In `web/`,
+`tools/debrand.sh` replaces them (logo, favicons, name in titles and text, links to Pi-hole's
+website and donation page) and `tools/check-branding.sh` fails if any are left. The result
+is one generated commit at the top of the web fork's branch; see
+`web/KESTRELPRO-CHANGES.md` for the rebase procedure. The About page states the software's
+origin and links to the upstream project.
 
 ## Engine
 

@@ -29,8 +29,8 @@ services:
       - "${VPN_DNS_IP:?set VPN_DNS_IP in .env}:53:53/tcp"
       - "${VPN_DNS_IP}:53:53/udp"
       - "${ADMIN_PORT:-8080}:80/tcp"
-      # Interim dashboard (P2). Goes away when the pages move into the admin UI (P3).
-      - "${ENGINE_PORT:-8090}:8090/tcp"
+      # Engine API, called by the KestrelPro pages in the admin UI (not needed behind a reverse proxy)
+      - "${KESTREL_ENGINE_PORT:-8090}:8090/tcp"
     env_file: .env
     environment:
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}

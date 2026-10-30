@@ -19,9 +19,10 @@ DB_PATH = os.environ.get("DB_PATH", "/etc/kestrel/kestrel.db")
 VPN_SUBNET = ipaddress.ip_network(os.environ.get("VPN_SUBNET", "10.8.0.0/24"))
 API_HOST = os.environ.get("ENGINE_HOST", "0.0.0.0")
 API_PORT = int(os.environ.get("ENGINE_PORT", "8090"))
-# P2 keeps the old :8090 dashboard and its login; P3 replaces it with the web fork's pages.
-DASHBOARD_PASSWORD = (os.environ.get("DASHBOARD_PASSWORD") or FTL_PASSWORD
-                      or os.environ.get("FTLCONF_webserver_api_password", ""))
+# Same path as the reverse-proxy route, so the admin UI's pages work either way.
+API_PREFIX = "/admin/api/kestrel"
+# Extra admin-UI origins allowed to call the engine cross-port (the UI's own host is always allowed).
+UI_ORIGINS = {o.strip().rstrip("/") for o in os.environ.get("KESTREL_UI_ORIGINS", "").split(",") if o.strip()}
 
 # Prefix of the comment on every Pi-hole deny entry the engine adds. Kept as "kestrel"
 # so entries made by the old add-on stay recognisable (undo, reconcile).

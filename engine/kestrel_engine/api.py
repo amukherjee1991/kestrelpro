@@ -1,25 +1,19 @@
-"""Engine HTTP API and the interim :8090 dashboard.
+"""Engine HTTP API, used by the KestrelPro pages in the admin UI.
 
-The dashboard and its own login stay only until P3, when the pages move into the web
-fork and requests are authenticated with the admin UI's session instead.
+There is no separate login: requests are authenticated with the admin UI's session
+(see auth.py). Routes live under config.API_PREFIX so the same URLs work through a
+reverse proxy on the admin UI's origin or directly on the engine's port.
 """
-import hashlib
-import hmac
 import json
-import os
-import secrets
 import threading
 import time
-from datetime import timedelta
 
 import requests
-from flask import Flask, abort, g, jsonify, redirect, request, send_from_directory, session
+from flask import Blueprint, Flask, abort, g, jsonify, request
 
-from . import classify, config, ftl as ftl_api, ingest, policy, store
+from . import auth, classify, config, ftl as ftl_api, ingest, policy, store
 
-STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
-OPEN_PATHS = {"/login", "/logout", "/healthz"}
-login_lock = threading.Lock()  # failed logins wait their turn, so guessing is slow
+OPEN_PATHS = {"/healthz"}
 STATUS_FILTERS = {
     "flagged": (store.BLOCKED, store.PENDING, store.USER_BLOCKED),
     "blocked": (store.BLOCKED, store.USER_BLOCKED),
@@ -32,30 +26,13 @@ HISTORY_FILTERS = {
     "undone": (store.UNBLOCKED, store.REJECTED),
     "flagged": (store.FLAGGED,),
 }
-
-
-def secret_key():
-    """Signing key for session cookies, kept next to the database so logins survive restarts."""
-    path = os.path.join(os.path.dirname(config.DB_PATH) or ".", "session.key")
-    try:
-        with open(path) as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        key = secrets.token_hex(32)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(key)
-        return key
+WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 def create_app(ftl, worker):
     app = Flask(__name__, static_folder=None)
-    app.config.update(SECRET_KEY=secret_key(), SESSION_COOKIE_NAME="kestrel_session",
-                      SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
-                      PERMANENT_SESSION_LIFETIME=timedelta(days=30))
-    password = config.DASHBOARD_PASSWORD
-    # Changing the password signs everyone out: sessions carry a fingerprint of the password they used.
-    password_tag = hashlib.sha256(app.config["SECRET_KEY"].encode() + password.encode()).hexdigest()[:16]
+    api = Blueprint("api", __name__, url_prefix=config.API_PREFIX)
+    sessions = auth.SessionCheck()
 
     def db():
         if "db" not in g:
@@ -67,45 +44,42 @@ def create_app(ftl, worker):
         if "db" in g:
             g.db.close()
 
-    @app.before_request
-    def require_login():
-        if request.path in OPEN_PATHS or (password and session.get("auth") == password_tag):
+    @app.after_request
+    def cors(resp):
+        origin = request.headers.get("Origin")
+        if auth.origin_allowed(origin, request.host):
+            resp.headers["Access-Control-Allow-Origin"] = origin
+            resp.headers["Access-Control-Allow-Credentials"] = "true"
+            resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-CSRF-TOKEN"
+            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE"
+            resp.headers["Access-Control-Max-Age"] = "600"
+        resp.headers["Vary"] = "Origin"
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @api.before_request
+    def require_session():
+        if request.method == "OPTIONS":  # CORS preflight; the real request is checked
+            return app.make_default_options_response()
+        if request.path[len(config.API_PREFIX):] in OPEN_PATHS:
             return None
-        if request.path.startswith("/api/"):
-            return jsonify({"error": "login required"}), 401
-        return redirect("/login")
-
-    @app.get("/healthz")
-    def healthz():
-        return jsonify({"ok": True})
-
-    @app.get("/login")
-    def login_page():
-        if password and session.get("auth") == password_tag:
-            return redirect("/")
-        return send_from_directory(STATIC, "login.html")
-
-    @app.post("/login")
-    def login():
-        if password and hmac.compare_digest(request.form.get("password", "").encode(), password.encode()):
-            session.clear()
-            session.permanent = request.form.get("remember") == "on"
-            session["auth"] = password_tag
-            return redirect("/")
-        with login_lock:
-            time.sleep(1)
-        return redirect("/login?failed=1")
-
-    @app.post("/logout")
-    def logout():
-        session.clear()
-        return redirect("/login?signed_out=1")
+        csrf = sessions.csrf_for(request.cookies.get("sid"))
+        if csrf is None:
+            return jsonify({"error": "unauthorized", "message": "Sign in to the admin UI first."}), 401
+        if request.method in WRITE_METHODS and request.headers.get("X-CSRF-TOKEN") != csrf:
+            return jsonify({"error": "forbidden", "message": "Missing or wrong CSRF token."}), 403
+        return None
 
     @app.get("/")
-    def index():
-        return send_from_directory(STATIC, "index.html")
+    def root():
+        return "KestrelPro engine. Open the admin UI and choose KestrelPro in the menu.\n", 200, {
+            "Content-Type": "text/plain; charset=utf-8"}
 
-    @app.get("/api/status")
+    @api.get("/healthz")
+    def healthz():
+        return jsonify({"ok": True, "engine": "kestrelpro", "prompt_version": classify.PROMPT_VERSION})
+
+    @api.get("/status")
     def status():
         d = db()
         day_ago = time.time() - 86400
@@ -144,7 +118,7 @@ def create_app(ftl, worker):
             "settings": settings,
         })
 
-    @app.get("/api/charts")
+    @api.get("/charts")
     def charts():
         d = db()
         hours = {}
@@ -171,7 +145,7 @@ def create_app(ftl, worker):
             "reviewed_by_category": reviewed,
         })
 
-    @app.get("/api/decisions")
+    @api.get("/decisions")
     def decisions():
         statuses = STATUS_FILTERS.get(request.args.get("status", "flagged"))
         q = request.args.get("q", "").strip().lower()
@@ -187,7 +161,7 @@ def create_app(ftl, worker):
         rows = db().execute(sql, args + [limit]).fetchall()
         return jsonify([{**dict(r), "clients": json.loads(r["clients"] or "[]")} for r in rows])
 
-    @app.get("/api/history")
+    @api.get("/history")
     def history():
         """Every block/unblock event, newest first. Filters: what, network (home|vpn), days, q."""
         actions = HISTORY_FILTERS.get(request.args.get("what", "blocks"))
@@ -216,7 +190,7 @@ def create_app(ftl, worker):
         shown = [e for e in in_scope if not actions or e["action"] in actions]
         return jsonify({"events": shown[:500], "summary": summary})
 
-    @app.post("/api/decisions/<path:domain>")
+    @api.post("/decisions/<path:domain>")
     def decide(domain):
         action = (request.get_json(silent=True) or {}).get("action")
         status, event = {"block": (store.USER_BLOCKED, store.MANUAL_BLOCKED),
@@ -229,14 +203,14 @@ def create_app(ftl, worker):
         policy.set_status(ftl, db(), domain, status, event)
         return jsonify({"ok": True, "status": status})
 
-    @app.post("/api/pending/approve-all")
+    @api.post("/pending/approve-all")
     def approve_all():
         rows = db().execute("select domain from verdicts where status = ?", (store.PENDING,)).fetchall()
         for r in rows:
             policy.set_status(ftl, db(), r["domain"], store.BLOCKED, store.APPROVED)
         return jsonify({"ok": True, "approved": len(rows)})
 
-    @app.route("/api/settings", methods=["GET", "POST"])
+    @api.route("/settings", methods=["GET", "POST"])
     def settings():
         if request.method == "GET":
             return jsonify({**store.get_settings(db()), "protected_builtin": sorted(policy.PROTECTED_BUILTIN)})
@@ -260,11 +234,12 @@ def create_app(ftl, worker):
         worker.wake()
         return jsonify(saved)
 
-    @app.post("/api/run")
+    @api.post("/run")
     def run_now():
         worker.wake()
         return jsonify({"ok": True})
 
+    app.register_blueprint(api)
     return app
 
 
