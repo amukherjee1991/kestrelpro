@@ -17,8 +17,9 @@ list yet. Nothing is sent to the cloud.
   models, and can teach it.
 - **Per device.** Different rules for different groups of devices (kids' tablets, work laptops).
 
-KestrelPro is a modified version of Pi-hole software (EUPL-1.2). Pi-hole is a registered
-trademark of Pi-hole, LLC. KestrelPro is not affiliated with or endorsed by Pi-hole, LLC.
+KestrelPro's own code (this repository) is MIT-licensed; the admin UI and image build are
+modified versions of Pi-hole software and stay under Pi-hole's EUPL-1.2 (see
+[License](#license)). Pi-hole is a registered trademark of Pi-hole, LLC. KestrelPro is not affiliated with or endorsed by Pi-hole, LLC.
 
 ## Requirements
 
@@ -74,6 +75,9 @@ Then:
 
 Updating: `docker compose pull && docker compose up -d`. Pin a version with
 `KESTRELPRO_VERSION` in `.env`.
+
+**On Ubuntu**, follow **[docs/UBUNTU.md](docs/UBUNTU.md)**: Docker, port 53, GPU drivers and
+firewall, step by step.
 
 If `docker compose up` says port 53 is in use, or you're replacing an existing Pi-hole or the
 Kestrel add-on, see **[docs/MIGRATING.md](docs/MIGRATING.md)**.
@@ -236,3 +240,12 @@ and opens an issue when Pi-hole publishes newer ones.
 - A fast, calibrated first-pass classifier in front of the model ([#1](https://github.com/amukherjee1991/kestrelpro/issues/1)).
 - Location privacy: the planned per-device location spoofing can't work as designed;
   alternatives are open for decision ([#2](https://github.com/amukherjee1991/kestrelpro/issues/2)).
+
+## License
+
+- **This repository** (the review engine, compose files, tools and docs): [MIT](LICENSE).
+- **[kestrelpro-web](https://github.com/amukherjee1991/kestrelpro-web)** and
+  **[kestrelpro-docker](https://github.com/amukherjee1991/kestrelpro-docker)**: modified
+  Pi-hole software, **EUPL-1.2**, like the originals. The published image contains both, so
+  it is distributed under the terms of each part's licence.
+- Pi-hole® is a registered trademark of Pi-hole, LLC; KestrelPro isn't affiliated with it.

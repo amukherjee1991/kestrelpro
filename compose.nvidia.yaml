@@ -1,6 +1,6 @@
 # NVIDIA GPU for the bundled model server. Needs the NVIDIA driver and the NVIDIA Container
 # Toolkit (`nvidia-ctk runtime configure --runtime=docker`). Use with:
-#   docker compose -f compose.yaml -f compose.nvidia.yaml up -d --build
+#   docker compose -f compose.yaml -f compose.nvidia.yaml up -d
 services:
   ollama:
     deploy:

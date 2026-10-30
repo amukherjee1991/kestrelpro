@@ -69,6 +69,8 @@ DNS answers for a model's decision would need a patched FTL and would add second
 
 ## Licensing and names
 
+- This repository (the engine, compose files, tools and docs) is original work under the MIT
+  licence (`LICENSE`). The engine is installed into the image as a separate program.
 - Everything derived from Pi-hole is EUPL-1.2. Distributing it means publishing the source
   of each build, keeping notices, and marking changes (`KESTRELPRO-CHANGES.md` in each fork).
 - Pi-hole's trademark rules forbid redistributing the software with its marks, so the admin

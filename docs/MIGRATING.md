@@ -85,8 +85,12 @@ run KestrelPro next to the old server first:
 port 53. On Ubuntu and many other desktops this is `systemd-resolved`:
 
 ```bash
-sudo sed -i 's/^#\?DNSStubListener=.*/DNSStubListener=no/' /etc/systemd/resolved.conf
+sudo mkdir -p /etc/systemd/resolved.conf.d
+printf '[Resolve]\nDNSStubListener=no\n' | sudo tee /etc/systemd/resolved.conf.d/kestrelpro.conf
+sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf   # the old target stops answering
 sudo systemctl restart systemd-resolved
 ```
+
+See [UBUNTU.md](UBUNTU.md) for the full Ubuntu install, including how to undo this.
 
 Or publish DNS on one specific address with `DNS_BIND_IP`, leaving the loopback resolver alone.
