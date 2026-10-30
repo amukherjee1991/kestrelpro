@@ -64,8 +64,28 @@ def model_digest(model):
     return m.get(model) or m.get(f"{model}:latest")
 
 
-def classify(batch, model):
-    """batch: list of (domain, query_count, client_count). Returns {domain: verdict}."""
+def prompt_version(examples=None):
+    """Recorded on every verdict, so verdicts made with your examples can be told apart."""
+    if not examples:
+        return PROMPT_VERSION
+    return f"{PROMPT_VERSION}+fs{len(examples['blocked']) + len(examples['kept'])}"
+
+
+def _system_prompt(examples):
+    if not examples:
+        return SYSTEM_PROMPT
+    parts = [SYSTEM_PROMPT, "", "This household has already decided on some domains. Use them to "
+             "calibrate, without copying them blindly:"]
+    if examples["blocked"]:
+        parts.append("- They chose to block: " + ", ".join(examples["blocked"]))
+    if examples["kept"]:
+        parts.append("- They chose to keep working (do not block similar ones): " + ", ".join(examples["kept"]))
+    return "\n".join(parts)
+
+
+def classify(batch, model, examples=None):
+    """batch: list of (domain, query_count, client_count). Returns {domain: verdict}.
+    examples: {"blocked": [...], "kept": [...]} from accuracy.examples(), or None."""
     rows = "\n".join(f"{d}\t{n} lookups\t{c} device(s)" for d, n, c in batch)
     r = requests.post(f"{config.OLLAMA_URL}/api/chat", timeout=900, json={
         "model": model,
@@ -75,7 +95,7 @@ def classify(batch, model):
         "options": {"temperature": 0, "num_ctx": 8192},
         "keep_alive": "15m",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": _system_prompt(examples)},
             {"role": "user", "content": f"Classify every domain below.\n\n{rows}"},
         ],
     })

@@ -10,7 +10,7 @@ import time
 
 import requests
 
-from . import classify, config, ftl as ftl_api, policy, safety, store
+from . import accuracy, classify, config, ftl as ftl_api, policies, policy, safety, store
 
 log = logging.getLogger("kestrel.ingest")
 
@@ -32,6 +32,7 @@ class Ingest:
         self.running = False   # true while the model is working
         self._allow = (0.0, set())
         self.storms = safety.StormWatch()
+        self.directory = policies.Directory(ftl)
         self._preflight_at = 0.0
 
     def wake(self):
@@ -45,9 +46,10 @@ class Ingest:
 
     def poll(self, db):
         """Queue every allowed query newer than the stored high-water mark. Returns rows read."""
-        hw = int(store.get_state(db, "ingest_hw", 0) or 0)
+        # -1 = nothing seen yet. FTL numbers the first query of a fresh database 0, so 0 is a real ID.
+        hw = int(store.get_state(db, "ingest_hw", -1))
         # First run: look back an hour, as the old add-on did.
-        since = time.time() - 3600 if hw == 0 else None
+        since = time.time() - 3600 if hw < 0 else None
         page = self.ftl.queries(start=0, length=PAGE, since=since)
         rows = page.get("queries") or []
         if not rows:
@@ -56,7 +58,7 @@ class Ingest:
         if top < hw:
             # IDs went backwards: FTL's query database was reset or replaced.
             log.warning("query IDs restarted (%d < %d); resetting the high-water mark", top, hw)
-            hw = 0
+            hw = -1
         # Page beneath a fixed cursor so queries arriving meanwhile don't shift the offsets;
         # they are picked up by the next poll.
         fresh = [q for q in rows if q["id"] > hw]
@@ -126,7 +128,8 @@ class Ingest:
         self.running = True
         try:
             batch = [(d, it["lookups"], len(it["devices"])) for d, it in items.items()]
-            verdicts = classify.classify(batch, s["model"])
+            examples = accuracy.examples(db) if s["few_shot"] else None
+            verdicts = classify.classify(batch, s["model"], examples=examples)
         except requests.RequestException:
             with self.lock:  # try these again once the model is back
                 for d, it in items.items():
@@ -136,33 +139,41 @@ class Ingest:
             self.running = False
             with self.lock:
                 self.inflight -= set(items)
-        self._record(db, s, items, verdicts)
+        self._record(db, s, items, verdicts, classify.prompt_version(examples))
         return len(items)
 
-    def _record(self, db, s, items, verdicts):
+    def _record(self, db, s, items, verdicts, prompt_version=classify.PROMPT_VERSION):
         now = time.time()
         digest = classify.model_digest(s["model"])
         # Paused: nothing new is blocked, even in Automatic mode; suggestions wait for approval.
-        auto = s["mode"] == "auto" and not safety.is_paused(db)
+        paused = safety.is_paused(db)
+        group_policies = policies.load(db)
         flagged = 0
         for d, it in items.items():
             v = verdicts.get(d)
             if not v:
                 continue  # the model skipped it; it is queued again on its next lookup
-            flag = policy.flags(v, s)
-            status, probation = store.ALLOWED, None
-            if flag and auto:
-                self.ftl.deny(d, policy.comment_for(v))
+            # Every group of every device that looked it up gets its own policy's say.
+            groups = set()
+            for dev in it["devices"].values():
+                groups |= self.directory.groups_for(dev["ip"], dev.get("name"))
+            auto_groups, review_groups = policies.decide(v, s, group_policies, groups or {policies.DEFAULT_GROUP},
+                                                         paused)
+            flag = bool(auto_groups or review_groups)
+            status, probation, block_groups = store.ALLOWED, None, None
+            if auto_groups:
+                self.ftl.deny(d, policy.comment_for(v), groups=auto_groups)
                 status, probation = store.BLOCKED, safety.probation_until(s, now)
-            elif flag:
+                block_groups = json.dumps(auto_groups)
+            elif review_groups:
                 status = store.PENDING
             clients = json.dumps(sorted(it["devices"].values(), key=lambda x: -x["lookups"]))
             db.execute("insert or replace into verdicts (domain, category, confidence, reason, status, queries, "
                        "devices, judged_at, updated_at, clients, expires_at, model, model_digest, prompt_version, "
-                       "probation_until) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                       "probation_until, block_groups) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (d, v["category"], v["confidence"], v["reason"], status, it["lookups"], len(it["devices"]),
                         now, now, clients, None if flag else policy.expires_at(v, now),
-                        s["model"], digest, classify.PROMPT_VERSION, probation))
+                        s["model"], digest, prompt_version, probation, block_groups))
             if flag:
                 flagged += 1
                 log.info("%s %s (%s %.2f): %s", status.upper(), d, v["category"], v["confidence"], v["reason"])

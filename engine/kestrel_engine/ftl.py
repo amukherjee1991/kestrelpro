@@ -87,6 +87,11 @@ class FTL:
             if e.response is None or e.response.status_code != 400 or not ("already present" in text or "UNIQUE" in text):
                 raise
 
+    def set_groups(self, domain, comment, groups, enabled=True):
+        """Reassign an existing deny entry (comment sent back, see set_enabled)."""
+        self.request("PUT", f"/domains/deny/exact/{domain}",
+                     json={"comment": comment, "groups": list(groups), "enabled": enabled})
+
     def set_enabled(self, domain, comment, enabled):
         # FTL resets a missing comment to empty, so the comment must be sent back as it was.
         self.request("PUT", f"/domains/deny/exact/{domain}", json={"comment": comment, "enabled": enabled})

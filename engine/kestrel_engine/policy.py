@@ -2,7 +2,7 @@
 import ipaddress
 import time
 
-from . import config, safety, store
+from . import config, policies, safety, store
 
 # Never auto-block these or anything under them; a false positive here breaks
 # logins, updates or core apps. Users add more via the dashboard.
@@ -58,14 +58,19 @@ def set_status(ftl, db, domain, status, action=None):
     domain = domain.strip().lower().rstrip(".")
     row = db.execute("select * from verdicts where domain = ?", (domain,)).fetchone()
     if status in (store.BLOCKED, store.USER_BLOCKED):
-        ftl.deny(domain, comment_for(dict(row)) if row else f"{config.TAG}: blocked by you")
+        # Your own block applies to every group, also when an automatic one covered only some.
+        everyone = policies.Directory(ftl).everyone()
+        comment = comment_for(dict(row)) if row else f"{config.TAG}: blocked by you"
+        ftl.deny(domain, comment, groups=everyone)
+        if row and row["block_groups"]:
+            ftl.set_groups(domain, comment, everyone)
     else:
         ftl.remove_deny(domain)
     now = time.time()
     if row:
         # A user's decision is final: it no longer expires and is off probation.
-        db.execute("update verdicts set status = ?, updated_at = ?, expires_at = null, probation_until = null "
-                   "where domain = ?", (status, now, domain))
+        db.execute("update verdicts set status = ?, updated_at = ?, expires_at = null, probation_until = null, "
+                   "block_groups = null where domain = ?", (status, now, domain))
     else:
         db.execute("insert into verdicts (domain, category, confidence, reason, status, queries, devices, "
                    "judged_at, updated_at) values (?, 'ads', 1.0, 'blocked by you', ?, 0, 0, ?, ?)",

@@ -14,7 +14,9 @@ class FakeFTL:
 
     def __init__(self):
         self.rows, self.allowed = [], set()
-        self.denied = {}  # domain -> {"comment", "enabled"}
+        self.denied = {}  # domain -> {"comment", "enabled", "groups"}
+        self.groups = [{"id": 0, "name": "Default", "enabled": True}]
+        self.clients = []  # [{"client": "192.168.1.20", "groups": [0, 1]}]
         self.calls = 0
 
     def add(self, domain, ip="192.168.1.5", status="FORWARDED", ts=None):
@@ -39,17 +41,29 @@ class FakeFTL:
             return [{"domain": d, "comment": None, "enabled": True} for d in self.allowed]
         return [{"domain": d, **e} for d, e in self.denied.items()]
 
+    def request(self, method, path, **kw):
+        if (method, path) == ("GET", "/groups"):
+            return {"groups": self.groups}
+        if (method, path) == ("GET", "/clients"):
+            return {"clients": self.clients}
+        if (method, path) == ("GET", "/lists"):
+            return {"lists": [{"address": "https://example.org/hosts", "type": "block", "enabled": True, "groups": [0]}]}
+        raise AssertionError(f"unexpected FTL call {method} {path}")
+
     def deny(self, domain, comment, groups=(0,)):
-        self.denied.setdefault(domain, {"comment": comment, "enabled": True})
+        self.denied.setdefault(domain, {"comment": comment, "enabled": True, "groups": list(groups)})
+
+    def set_groups(self, domain, comment, groups, enabled=True):
+        self.denied[domain] = {"comment": comment, "enabled": enabled, "groups": list(groups)}
 
     def set_enabled(self, domain, comment, enabled):
-        self.denied[domain] = {"comment": comment, "enabled": enabled}
+        self.denied[domain] = {**self.denied.get(domain, {}), "comment": comment, "enabled": enabled}
 
     def remove_deny(self, domain):
         self.denied.pop(domain, None)
 
 
-def verdicts_for(batch, model):
+def verdicts_for(batch, model, examples=None):
     return {d: {"domain": d, "category": "ads" if d.startswith("ads.") else "legitimate",
                 "confidence": 0.95, "reason": "test"} for d, _, _ in batch}
 
@@ -71,11 +85,19 @@ class IngestTest(unittest.TestCase):
         self.ftl.add("new.example.com")
         self.assertEqual(self.ing.poll(self.db), 1)
 
+    def test_first_query_of_a_fresh_ftl_has_id_0(self):
+        self.ftl.add("first.example.com")
+        self.ftl.rows[-1]["id"] = 0
+        self.ftl.add("second.example.com")
+        self.ftl.rows[-1]["id"] = 1
+        self.assertEqual(self.ing.poll(self.db), 2)
+        self.assertEqual(set(self.ing.queue), {"first.example.com", "second.example.com"})
+
     def test_ids_going_backwards_resets_high_water_mark(self):
         store.set_state(self.db, "ingest_hw", 99999)
         self.ftl.add("a.example.com")
         self.assertEqual(self.ing.poll(self.db), 1)
-        self.assertEqual(int(store.get_state(self.db, "ingest_hw")), 1)
+        self.assertEqual(int(store.get_state(self.db, "ingest_hw")), 1)  # the new top ID
 
     def test_skips_blocked_local_protected_allowlisted_and_decided(self):
         self.ftl.allowed.add("ok.example.net")

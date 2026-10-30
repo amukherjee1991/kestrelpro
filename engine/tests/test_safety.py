@@ -82,7 +82,7 @@ class SafetyTest(unittest.TestCase):
         self.ftl.denied["someone-elses.example"] = {"comment": "my own block", "enabled": True}
         comment = self.ftl.denied["ads.example.org"]["comment"]
         self.assertEqual(safety.pause(self.ftl, self.db), 1)
-        self.assertEqual(self.ftl.denied["ads.example.org"], {"comment": comment, "enabled": False})
+        self.assertEqual(self.ftl.denied["ads.example.org"], {"comment": comment, "enabled": False, "groups": [0]})
         self.assertTrue(self.ftl.denied["someone-elses.example"]["enabled"])
         self.assertTrue(safety.is_paused(self.db))
         # While paused, Automatic mode only suggests

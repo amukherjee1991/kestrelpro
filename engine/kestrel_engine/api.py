@@ -11,7 +11,7 @@ import time
 import requests
 from flask import Blueprint, Flask, abort, g, jsonify, request
 
-from . import auth, classify, config, ftl as ftl_api, ingest, policy, safety, store
+from . import accuracy, auth, classify, config, ftl as ftl_api, ingest, models, policies, policy, safety, store
 
 OPEN_PATHS = {"/healthz"}
 STATUS_FILTERS = {
@@ -29,8 +29,10 @@ HISTORY_FILTERS = {
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
-def create_app(ftl, worker):
+def create_app(ftl, worker, jobs=None):
     app = Flask(__name__, static_folder=None)
+    jobs = jobs or models.Jobs()
+    directory = policies.Directory(ftl)
     api = Blueprint("api", __name__, url_prefix=config.API_PREFIX)
     sessions = auth.SessionCheck()
 
@@ -106,7 +108,7 @@ def create_app(ftl, worker):
             "last_started": float(store.get_state(d, "last_started", 0) or 0),
             "last_finished": float(store.get_state(d, "last_finished", 0) or 0),
             "last_error": store.get_state(d, "last_error", ""),
-            "warnings": json.loads(store.get_state(d, "warnings", "[]")),
+            "warnings": json.loads(store.get_state(d, "warnings", "[]")) + [w for w in [models.pin_warning(settings)] if w],
             "reviewed_total": sum(counts.values()),
             "reviewed_today": today,
             "blocked_total": counts.get(store.BLOCKED, 0) + counts.get(store.USER_BLOCKED, 0),
@@ -160,7 +162,17 @@ def create_app(ftl, worker):
             args += [f"%{q}%", f"%{q}%"]
         sql += " order by updated_at desc limit ?"
         rows = db().execute(sql, args + [limit]).fetchall()
-        return jsonify([{**dict(r), "clients": json.loads(r["clients"] or "[]")} for r in rows])
+        out = []
+        for r in rows:
+            row = {**dict(r), "clients": json.loads(r["clients"] or "[]")}
+            # Automatic blocks under a group policy apply to those groups only: name them.
+            groups = json.loads(r["block_groups"]) if r["block_groups"] else None
+            if groups:
+                directory.refresh()
+                row["block_group_names"] = [directory.groups.get(g, {}).get("name", f"Group {g}") for g in groups]
+            row["block_groups"] = groups
+            out.append(row)
+        return jsonify(out)
 
     @api.get("/history")
     def history():
@@ -237,6 +249,8 @@ def create_app(ftl, worker):
             changes["storm_lookups"] = min(max(int(body["storm_lookups"]), 3), 10000)
         if "storm_devices" in body:
             changes["storm_devices"] = min(max(int(body["storm_devices"]), 1), 100)
+        if "few_shot" in body:
+            changes["few_shot"] = bool(body["few_shot"])
         saved = store.save_settings(db(), changes)
         worker.wake()
         return jsonify(saved)
@@ -274,6 +288,86 @@ def create_app(ftl, worker):
         if not isinstance(domains, list):
             abort(400)
         return jsonify(safety.explain(db(), [d for d in domains if isinstance(d, str)]))
+
+    # ---- per-device policies (policies.py) ----------------------------------------------
+    @api.get("/policies")
+    def get_policies():
+        return jsonify({"groups": policies.summary(db(), directory, store.get_settings(db())),
+                        "modes": policies.MODES})
+
+    @api.post("/policies/<int:group_id>")
+    def set_policy(group_id):
+        body = request.get_json(silent=True) or {}
+        conf = body.get("min_confidence")
+        cats = body.get("block_categories")
+        try:
+            if conf is not None:
+                conf = min(max(float(conf), 0.5), 1.0)
+            if cats is not None:
+                cats = [c for c in cats if c in classify.CATEGORIES]
+            policies.save(db(), group_id, body.get("mode", "inherit"), conf, cats)
+        except (ValueError, TypeError) as e:
+            return jsonify({"error": "bad_request", "message": str(e)}), 400
+        return jsonify({"ok": True})
+
+    # ---- models (models.py) -----------------------------------------------------------
+    def _model_error(e):
+        if isinstance(e, ValueError):
+            return jsonify({"error": "bad_request", "message": str(e)}), 400
+        return jsonify({"error": "model_server", "message": f"The model server didn't answer: {e}"}), 502
+
+    @api.get("/models")
+    def list_models():
+        settings = store.get_settings(db())
+        try:
+            installed = models.installed(settings)
+        except requests.RequestException as e:
+            return _model_error(e)
+        return jsonify({"installed": installed, "in_use": settings["model"], "pinned": settings["model_digest"],
+                        "pin_warning": models.pin_warning(settings), "jobs": jobs.snapshot(),
+                        "benchmarks": models.benchmarks(db())})
+
+    @api.post("/models/pull")
+    def pull_model():
+        try:
+            jobs.pull(str((request.get_json(silent=True) or {}).get("name", "")))
+        except ValueError as e:
+            return _model_error(e)
+        return jsonify({"ok": True})
+
+    @api.post("/models/use")
+    def use_model():
+        try:
+            saved = models.use(db(), str((request.get_json(silent=True) or {}).get("name", "")))
+        except (ValueError, requests.RequestException) as e:
+            return _model_error(e)
+        worker.wake()
+        return jsonify(saved)
+
+    @api.post("/models/delete")
+    def delete_model():
+        try:
+            models.delete(store.get_settings(db()), str((request.get_json(silent=True) or {}).get("name", "")))
+        except (ValueError, requests.RequestException) as e:
+            return _model_error(e)
+        return jsonify({"ok": True})
+
+    @api.post("/models/benchmark")
+    def benchmark_model():
+        try:
+            jobs.start_benchmark(str((request.get_json(silent=True) or {}).get("name", "")))
+        except ValueError as e:
+            return _model_error(e)
+        return jsonify({"ok": True})
+
+    @api.get("/models/jobs")
+    def model_jobs():
+        return jsonify(jobs.snapshot())
+
+    # ---- accuracy (accuracy.py) -------------------------------------------------------
+    @api.get("/accuracy")
+    def get_accuracy():
+        return jsonify(accuracy.report(db(), store.get_settings(db())))
 
     @api.post("/run")
     def run_now():

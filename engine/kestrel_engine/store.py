@@ -57,7 +57,21 @@ def _m3_probation(db):
         db.execute("alter table verdicts add column probation_until real")
 
 
-MIGRATIONS = [_m1_base, _m2_provenance, _m3_probation]
+def _m4_policies_models(db):
+    """Per-group policies (policies.py), the groups a block applies to, model benchmarks (models.py)."""
+    db.execute("""create table if not exists policies (
+        group_id integer primary key, mode text not null default 'inherit',
+        min_confidence real, block_categories text, updated_at real)""")
+    if "block_groups" not in _columns(db, "verdicts"):
+        # JSON list of DNS-server group IDs the deny entry is assigned to; null = everyone.
+        db.execute("alter table verdicts add column block_groups text")
+    db.execute("""create table if not exists benchmarks (
+        id integer primary key, model text, digest text, started_at real, finished_at real,
+        labelled integer, agree integer, flagged_right integer, flagged_wrong integer,
+        missed integer, seconds real, error text)""")
+
+
+MIGRATIONS = [_m1_base, _m2_provenance, _m3_probation, _m4_policies_models]
 
 
 def open_db(path=None):

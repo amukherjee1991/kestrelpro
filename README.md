@@ -72,6 +72,29 @@ is required: a password-less admin UI is treated as signed out.
 | ![Query Log](docs/screenshots/querylog-ai-explanation.png) | ![Something broke?](docs/screenshots/something-broke.png) |
 | AI verdict in the Query Log | Something broke? |
 
+## Device policies, models and accuracy
+
+- **Device policies.** Give a group of devices (Group Management → Clients) its own rules:
+  same as AI settings, Review first, Automatic or Off, with its own threshold and kinds of
+  domain. An automatic block made under a group's policy is assigned to that group only, so
+  other devices are unaffected; Decisions labels it, e.g. "Kids only". Blocks you make or
+  approve yourself apply to everyone. A device only in a non-Default group gets no block lists
+  unless they're assigned to that group too; the page warns about such groups.
+- **Models.** Installed models with GPU/CPU placement; download with progress; *Use* switches
+  and pins the exact build (a later `ollama pull` that changes it shows a warning until you
+  re-pin); delete; *Benchmark* grades a model against your own decisions.
+- **Accuracy.** Your *Block* / *Don't block* decisions are a labelled set: how often the model
+  agrees with you, by category and model, and where you disagree. With *Learn from my
+  decisions* on (AI settings), a few recent decisions are shown to the model as examples;
+  verdicts made that way carry a `+fs` prompt version.
+
+| | |
+|---|---|
+| ![Device policies](docs/screenshots/device-policies.png) | ![Models](docs/screenshots/models-benchmark.png) |
+| Device policies | Models and a benchmark |
+| ![Accuracy](docs/screenshots/accuracy.png) | ![Kids-only blocks](docs/screenshots/decisions-device-policy.png) |
+| Accuracy | Blocks under a device policy |
+
 ## Screenshots
 
 Taken from a test container filled with made-up data (`engine/tools/seed_demo.py`).

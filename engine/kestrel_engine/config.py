@@ -52,4 +52,8 @@ DEFAULT_SETTINGS = {
     "probation_hours": int(os.environ.get("PROBATION_HOURS", "24")),
     "storm_lookups": int(os.environ.get("STORM_LOOKUPS", "20")),
     "storm_devices": int(os.environ.get("STORM_DEVICES", "2")),
+    # Feedback (accuracy.py): show the model recent examples of your own decisions.
+    "few_shot": os.environ.get("FEW_SHOT", "true").lower() in ("1", "true", "yes"),
+    # Model pinning (models.py): the digest of `model` when it was chosen; a change is flagged.
+    "model_digest": os.environ.get("MODEL_DIGEST", ""),
 }
