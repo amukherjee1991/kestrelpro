@@ -1,0 +1,56 @@
+# KestrelPro: DNS blocking with an AI second opinion.
+#   cp .env.example .env    # then edit
+#   docker compose up -d --build
+#   docker compose exec ollama ollama pull gemma4:12b
+#
+# Builds from the local forks next to this file:
+#   ./docker-pi-hole  branch kestrelpro/2026.10.0-k0   (image build, start.sh, engine supervision)
+#   ./web             branch kestrelpro/v6.6.1-k0      (admin UI)
+#   ./engine          the review engine
+name: kestrelpro
+
+services:
+  kestrelpro:
+    build:
+      context: ./docker-pi-hole/src
+      additional_contexts:
+        kestrelpro-web: ./web
+        kestrelpro-engine: ./engine
+      args:
+        CORE_BRANCH: v6.5
+        PADD_BRANCH: master
+        PIHOLE_DOCKER_TAG: kestrelpro-2026.10.0-k0
+    image: kestrelpro:2026.10.0-k0
+    container_name: ${CONTAINER_NAME:-kestrelpro}
+    restart: unless-stopped
+    ports:
+      - "${LAN_DNS_IP:?set LAN_DNS_IP in .env}:53:53/tcp"
+      - "${LAN_DNS_IP}:53:53/udp"
+      - "${VPN_DNS_IP:?set VPN_DNS_IP in .env}:53:53/tcp"
+      - "${VPN_DNS_IP}:53:53/udp"
+      - "${ADMIN_PORT:-8080}:80/tcp"
+      # Interim dashboard (P2). Goes away when the pages move into the admin UI (P3).
+      - "${ENGINE_PORT:-8090}:8090/tcp"
+    env_file: .env
+    environment:
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+    volumes:
+      - ./etc-pihole:/etc/pihole
+      - ./etc-kestrel:/etc/kestrel
+
+  # Bundled model server. To use an Ollama elsewhere, set OLLAMA_URL and drop
+  # "ollama" from COMPOSE_PROFILES in .env.
+  ollama:
+    profiles: [ollama]
+    image: ollama/ollama:0.40.13
+    container_name: ${OLLAMA_CONTAINER_NAME:-ollama}
+    restart: unless-stopped
+    volumes:
+      - ${OLLAMA_DATA:-./ollama}:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

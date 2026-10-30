@@ -1,0 +1,9 @@
+web/
+docker-pi-hole/
+__pycache__/
+*.pyc
+.env
+data/
+etc-pihole/
+etc-kestrel/
+ollama/
