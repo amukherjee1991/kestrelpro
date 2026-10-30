@@ -87,6 +87,22 @@ Taken from a test container filled with made-up data (`engine/tools/seed_demo.py
 
 All screenshots are in [docs/screenshots/](docs/screenshots/), including phone layouts.
 
+## Design
+
+The whole admin UI, not only the KestrelPro pages, uses one modern skin
+(`web/style/kestrelpro.css`, dark tokens in `kestrelpro-dark.css`): neutral surfaces, the
+falcon's rust as the single accent, stat tiles as cards, soft badges, visible keyboard focus.
+Motion is limited to press feedback and the dialog entrance, and is off under the system's
+reduced-motion setting. It applies to the Default themes (light, dark, darker, auto); LCARS
+and the high-contrast themes are left as upstream ships them.
+
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Query Log](docs/screenshots/querylog-light.png) |
+| Dashboard | Query Log |
+| ![Domains](docs/screenshots/domains-dark.png) | ![System settings](docs/screenshots/settings-system-dark.png) |
+| Domains (dark) | System settings (dark) |
+
 ## Debranding
 
 Pi-hole's trademark rules forbid redistributing the software with its marks. In `web/`,

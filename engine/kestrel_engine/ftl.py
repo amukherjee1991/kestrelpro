@@ -81,8 +81,10 @@ class FTL:
             self.request("POST", "/domains/deny/exact",
                          json={"domain": domain, "comment": comment, "groups": list(groups), "enabled": True})
         except requests.HTTPError as e:
-            # Already on the deny list is fine.
-            if e.response is None or e.response.status_code != 400 or "UNIQUE" not in e.response.text:
+            # Already on the deny list is fine. FTL v6.8 says "The item is already present";
+            # older versions surfaced SQLite's "UNIQUE constraint failed".
+            text = e.response.text if e.response is not None else ""
+            if e.response is None or e.response.status_code != 400 or not ("already present" in text or "UNIQUE" in text):
                 raise
 
     def set_enabled(self, domain, comment, enabled):
