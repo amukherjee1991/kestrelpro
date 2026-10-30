@@ -88,7 +88,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.client.post(url, json={"action": "block"}, headers={"X-CSRF-TOKEN": "nope"}).status_code, 403)
         r = self.client.post(url, json={"action": "block"}, headers={"X-CSRF-TOKEN": "tok"})
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(self.ftl.denied, {"ads.example.org"})
+        self.assertEqual(set(self.ftl.denied), {"ads.example.org"})
 
     def test_cors_only_for_admin_origin(self):
         self.client.set_cookie("sid", "good")

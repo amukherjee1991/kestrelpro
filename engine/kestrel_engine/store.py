@@ -11,6 +11,8 @@ BLOCKED, PENDING, ALLOWED, USER_ALLOWED, USER_BLOCKED = "blocked", "pending", "a
 # History actions (one row per event in the `events` table).
 AUTO_BLOCKED, FLAGGED, APPROVED, MANUAL_BLOCKED, UNBLOCKED, REJECTED = (
     "auto_blocked", "flagged", "approved", "user_blocked", "unblocked", "rejected")
+# An automatic block withdrawn during its trial period (safety.py).
+PROBATION_REVERTED = "probation_reverted"
 
 # How long the model's "this is fine" stands before the domain is reviewed again.
 # Flagged domains and the user's own decisions never expire on their own.
@@ -49,7 +51,13 @@ def _m2_provenance(db):
     db.execute("create index if not exists verdicts_expiry on verdicts (expires_at)")
 
 
-MIGRATIONS = [_m1_base, _m2_provenance]
+def _m3_probation(db):
+    """Trial period for automatic blocks (safety.py)."""
+    if "probation_until" not in _columns(db, "verdicts"):
+        db.execute("alter table verdicts add column probation_until real")
+
+
+MIGRATIONS = [_m1_base, _m2_provenance, _m3_probation]
 
 
 def open_db(path=None):

@@ -1,15 +1,17 @@
 """KestrelPro engine.
 
 Usage:
-  python -m kestrel_engine serve    API, interim dashboard and the review loop (the container default)
+  python -m kestrel_engine serve    API for the admin UI's KestrelPro pages, and the review loop (container default)
   python -m kestrel_engine once     read everything new and review it now
   python -m kestrel_engine report   show recent decisions
   python -m kestrel_engine undo     remove every domain KestrelPro has blocked
+  python -m kestrel_engine pause    disable every KestrelPro block (nothing is deleted)
+  python -m kestrel_engine resume   enable them again
 """
 import logging
 import sys
 
-from . import ftl as ftl_api, ingest, policy, store
+from . import ftl as ftl_api, ingest, policy, safety, store
 
 
 def report(db, limit=40):
@@ -29,7 +31,7 @@ def main(argv):
     if cmd == "serve":
         from . import api
         return api.serve()
-    if cmd not in ("once", "report", "undo"):
+    if cmd not in ("once", "report", "undo", "pause", "resume"):
         print(__doc__)
         return 2
     db = store.open_db()
@@ -39,6 +41,10 @@ def main(argv):
     try:
         if cmd == "undo":
             print(f"removed {len(policy.undo(ftl, db))} domain(s) added by KestrelPro")
+        elif cmd == "pause":
+            print(f"paused: {safety.pause(ftl, db)} KestrelPro block(s) disabled; `resume` turns them back on")
+        elif cmd == "resume":
+            print(f"resumed: {safety.resume(ftl, db)} KestrelPro block(s) enabled")
         else:
             print(f"reviewed {ingest.Ingest(ftl).run_once(db)} domain(s)")
     finally:

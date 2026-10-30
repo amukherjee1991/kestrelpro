@@ -48,4 +48,8 @@ DEFAULT_SETTINGS = {
     "batch_size": int(os.environ.get("BATCH_SIZE", "25")),
     "max_domains_per_cycle": int(os.environ.get("MAX_DOMAINS_PER_CYCLE", "300")),
     "protected_extra": _list("PROTECTED_DOMAINS"),
+    # Safety net (safety.py): trial period for automatic blocks and what counts as a retry storm.
+    "probation_hours": int(os.environ.get("PROBATION_HOURS", "24")),
+    "storm_lookups": int(os.environ.get("STORM_LOOKUPS", "20")),
+    "storm_devices": int(os.environ.get("STORM_DEVICES", "2")),
 }

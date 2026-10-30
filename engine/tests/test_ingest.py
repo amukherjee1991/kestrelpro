@@ -13,16 +13,20 @@ class FakeFTL:
     """Mimics FTL v6.8 /api/queries: newest first by id, `cursor` means id <= cursor, `start` is an offset."""
 
     def __init__(self):
-        self.rows, self.denied, self.allowed = [], set(), set()
+        self.rows, self.allowed = [], set()
+        self.denied = {}  # domain -> {"comment", "enabled"}
         self.calls = 0
 
     def add(self, domain, ip="192.168.1.5", status="FORWARDED", ts=None):
+        t = ts or time.time()
         self.rows.append({"id": len(self.rows) + 1, "domain": domain, "status": status,
-                          "timestamp": ts or time.time(), "client": {"ip": ip, "name": None}})
+                          "timestamp": t, "time": t, "client": {"ip": ip, "name": None}})
 
-    def queries(self, start=0, length=1000, cursor=None, since=None):
+    def queries(self, start=0, length=1000, cursor=None, since=None, client_ip=None):
         self.calls += 1
         rows = sorted(self.rows, key=lambda q: -q["id"])
+        if client_ip:
+            rows = [q for q in rows if q["client"]["ip"] == client_ip]
         if cursor is not None:
             rows = [q for q in rows if q["id"] <= cursor]
         if since is not None:
@@ -31,14 +35,18 @@ class FakeFTL:
                 "cursor": cursor if cursor is not None else (max((q["id"] for q in self.rows), default=None))}
 
     def list_domains(self, kind):
-        src = self.allowed if kind == "allow" else self.denied
-        return [{"domain": d, "comment": "kestrel: x"} for d in src]
+        if kind == "allow":
+            return [{"domain": d, "comment": None, "enabled": True} for d in self.allowed]
+        return [{"domain": d, **e} for d, e in self.denied.items()]
 
     def deny(self, domain, comment, groups=(0,)):
-        self.denied.add(domain)
+        self.denied.setdefault(domain, {"comment": comment, "enabled": True})
+
+    def set_enabled(self, domain, comment, enabled):
+        self.denied[domain] = {"comment": comment, "enabled": enabled}
 
     def remove_deny(self, domain):
-        self.denied.discard(domain)
+        self.denied.pop(domain, None)
 
 
 def verdicts_for(batch, model):
@@ -101,7 +109,7 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(rows["cdn.example.org"]["status"], store.ALLOWED)
         self.assertGreater(rows["cdn.example.org"]["expires_at"], time.time() + 29 * 86400)
         self.assertEqual(rows["cdn.example.org"]["model_digest"], "sha256:x")
-        self.assertEqual(self.ftl.denied, set())
+        self.assertEqual(set(self.ftl.denied), set())
 
     def test_auto_mode_blocks(self):
         store.save_settings(self.db, {"mode": "auto"})
@@ -110,7 +118,7 @@ class IngestTest(unittest.TestCase):
         with mock.patch.object(ingest.classify, "classify", side_effect=verdicts_for), \
                 mock.patch.object(ingest.classify, "model_digest", return_value=None):
             self.ing.flush(self.db, force=True)
-        self.assertEqual(self.ftl.denied, {"ads.example.org"})
+        self.assertEqual(set(self.ftl.denied), {"ads.example.org"})
 
     def test_model_failure_requeues_batch(self):
         self.ftl.add("x.example.org", ip="10.8.0.2")

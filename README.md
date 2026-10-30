@@ -54,6 +54,24 @@ The engine accepts a request only with a live admin-UI session (`sid` cookie, ch
 FTL and cached for 10 s); changes also need that session's CSRF token. An admin password
 is required: a password-less admin UI is treated as signed out.
 
+## Safety net
+
+- **Trial period.** A new automatic block is on trial for 24 h. It is withdrawn (back to
+  *Needs approval*) if you unblock another domain of the same site, or if two or more devices
+  each retry it 20+ times within 5 minutes, which is what broken apps do. Tunable in AI settings.
+- **Pause.** *Pause KestrelPro blocks* on the AI review page (or `kestrel_engine pause`)
+  disables every block KestrelPro added, without deleting anything; *Resume* turns them back
+  on. Your block lists are not affected. While paused, Automatic mode only suggests.
+- **Something broke?** Pick a device and a time window to see the KestrelPro blocks it ran
+  into, busiest first, with *Unblock* and *Never block*.
+- **Query Log.** Domains KestrelPro has judged get an AI badge. Clicking it shows the verdict,
+  which list or rule blocked the domain, and one-click actions.
+
+| | |
+|---|---|
+| ![Query Log](docs/screenshots/querylog-ai-explanation.png) | ![Something broke?](docs/screenshots/something-broke.png) |
+| AI verdict in the Query Log | Something broke? |
+
 ## Screenshots
 
 Taken from a test container filled with made-up data (`engine/tools/seed_demo.py`).
@@ -83,7 +101,7 @@ origin and links to the upstream project.
 ```bash
 cd engine
 python -m unittest discover -s tests -t .
-docker exec kestrelpro sh -c 'cd /opt/kestrel-engine && su-exec kestrel python3 -m kestrel_engine report'
+docker exec kestrelpro sh -c 'cd /opt/kestrel-engine && su-exec kestrel:pihole python3 -m kestrel_engine report'   # once | undo | pause | resume
 ```
 
 The engine signs in to FTL with its CLI password (`/etc/pihole/cli_pw`), which can manage

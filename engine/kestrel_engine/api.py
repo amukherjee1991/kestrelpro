@@ -11,7 +11,7 @@ import time
 import requests
 from flask import Blueprint, Flask, abort, g, jsonify, request
 
-from . import auth, classify, config, ftl as ftl_api, ingest, policy, store
+from . import auth, classify, config, ftl as ftl_api, ingest, policy, safety, store
 
 OPEN_PATHS = {"/healthz"}
 STATUS_FILTERS = {
@@ -115,6 +115,7 @@ def create_app(ftl, worker):
             "pending": counts.get(store.PENDING, 0),
             "model": model,
             "prompt_version": classify.PROMPT_VERSION,
+            "safety": safety.summary(d),
             "settings": settings,
         })
 
@@ -200,8 +201,8 @@ def create_app(ftl, worker):
         domain = domain.strip().lower().rstrip(".")
         if not status or "." not in domain or " " in domain:
             abort(400)
-        policy.set_status(ftl, db(), domain, status, event)
-        return jsonify({"ok": True, "status": status})
+        reverted = policy.set_status(ftl, db(), domain, status, event)
+        return jsonify({"ok": True, "status": status, "reverted": reverted})
 
     @api.post("/pending/approve-all")
     def approve_all():
@@ -230,9 +231,49 @@ def create_app(ftl, worker):
             changes["protected_extra"] = sorted({d.strip().lower() for d in body["protected_extra"] if "." in d.strip()})
         if body.get("model"):
             changes["model"] = str(body["model"]).strip()
+        if "probation_hours" in body:
+            changes["probation_hours"] = min(max(int(body["probation_hours"]), 0), 24 * 14)
+        if "storm_lookups" in body:
+            changes["storm_lookups"] = min(max(int(body["storm_lookups"]), 3), 10000)
+        if "storm_devices" in body:
+            changes["storm_devices"] = min(max(int(body["storm_devices"]), 1), 100)
         saved = store.save_settings(db(), changes)
         worker.wake()
         return jsonify(saved)
+
+    @api.post("/pause")
+    def pause():
+        n = safety.pause(ftl, db())
+        return jsonify({"ok": True, "paused": True, "entries": n})
+
+    @api.post("/resume")
+    def resume():
+        n = safety.resume(ftl, db())
+        return jsonify({"ok": True, "paused": False, "entries": n})
+
+    @api.get("/devices")
+    def devices():
+        return jsonify(safety.devices(ftl))
+
+    @api.get("/broke")
+    def broke():
+        """KestrelPro blocks one device ran into recently: ?client=<ip>&minutes=30"""
+        client = request.args.get("client", "").strip()
+        try:
+            minutes = min(max(int(request.args.get("minutes", 30)), 1), 24 * 60)
+        except ValueError:
+            abort(400)
+        if not client or len(client) > 64 or any(c in client for c in " /?&#"):
+            abort(400)
+        return jsonify(safety.broke(ftl, db(), client, minutes))
+
+    @api.post("/explain")
+    def explain():
+        """Verdicts for the domains on a query-log page. POST {"domains": [...]}"""
+        domains = (request.get_json(silent=True) or {}).get("domains") or []
+        if not isinstance(domains, list):
+            abort(400)
+        return jsonify(safety.explain(db(), [d for d in domains if isinstance(d, str)]))
 
     @api.post("/run")
     def run_now():

@@ -2,7 +2,7 @@
 import ipaddress
 import time
 
-from . import config, store
+from . import config, safety, store
 
 # Never auto-block these or anything under them; a false positive here breaks
 # logins, updates or core apps. Users add more via the dashboard.
@@ -63,9 +63,9 @@ def set_status(ftl, db, domain, status, action=None):
         ftl.remove_deny(domain)
     now = time.time()
     if row:
-        # A user's decision is final: it no longer expires.
-        db.execute("update verdicts set status = ?, updated_at = ?, expires_at = null where domain = ?",
-                   (status, now, domain))
+        # A user's decision is final: it no longer expires and is off probation.
+        db.execute("update verdicts set status = ?, updated_at = ?, expires_at = null, probation_until = null "
+                   "where domain = ?", (status, now, domain))
     else:
         db.execute("insert into verdicts (domain, category, confidence, reason, status, queries, devices, "
                    "judged_at, updated_at) values (?, 'ads', 1.0, 'blocked by you', ?, 0, 0, ?, ?)",
@@ -74,6 +74,10 @@ def set_status(ftl, db, domain, status, action=None):
         r = dict(row) if row else {"category": "ads", "confidence": 1.0, "reason": "blocked by you", "clients": "[]"}
         store.log_event(db, domain, action, r["category"], r["confidence"], r["reason"], r["clients"])
     db.commit()
+    # Unblocking one domain of a site is a hint that its siblings' fresh blocks may be wrong too.
+    if action == store.UNBLOCKED:
+        return safety.revert_siblings(ftl, db, domain)
+    return []
 
 
 def undo(ftl, db):

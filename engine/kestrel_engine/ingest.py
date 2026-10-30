@@ -10,7 +10,7 @@ import time
 
 import requests
 
-from . import classify, config, ftl as ftl_api, policy, store
+from . import classify, config, ftl as ftl_api, policy, safety, store
 
 log = logging.getLogger("kestrel.ingest")
 
@@ -31,6 +31,7 @@ class Ingest:
         self.event = threading.Event()
         self.running = False   # true while the model is working
         self._allow = (0.0, set())
+        self.storms = safety.StormWatch()
         self._preflight_at = 0.0
 
     def wake(self):
@@ -68,6 +69,7 @@ class Ingest:
             fresh += [q for q in rows if q["id"] > hw]
             start += len(rows)
         self._enqueue(db, fresh)
+        self.storms.feed(self.ftl, db, fresh, store.get_settings(db))
         store.set_state(db, "ingest_hw", top)
         return len(fresh)
 
@@ -140,25 +142,27 @@ class Ingest:
     def _record(self, db, s, items, verdicts):
         now = time.time()
         digest = classify.model_digest(s["model"])
+        # Paused: nothing new is blocked, even in Automatic mode; suggestions wait for approval.
+        auto = s["mode"] == "auto" and not safety.is_paused(db)
         flagged = 0
         for d, it in items.items():
             v = verdicts.get(d)
             if not v:
                 continue  # the model skipped it; it is queued again on its next lookup
             flag = policy.flags(v, s)
-            status = store.ALLOWED
-            if flag and s["mode"] == "auto":
+            status, probation = store.ALLOWED, None
+            if flag and auto:
                 self.ftl.deny(d, policy.comment_for(v))
-                status = store.BLOCKED
+                status, probation = store.BLOCKED, safety.probation_until(s, now)
             elif flag:
                 status = store.PENDING
             clients = json.dumps(sorted(it["devices"].values(), key=lambda x: -x["lookups"]))
             db.execute("insert or replace into verdicts (domain, category, confidence, reason, status, queries, "
-                       "devices, judged_at, updated_at, clients, expires_at, model, model_digest, prompt_version) "
-                       "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                       "devices, judged_at, updated_at, clients, expires_at, model, model_digest, prompt_version, "
+                       "probation_until) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (d, v["category"], v["confidence"], v["reason"], status, it["lookups"], len(it["devices"]),
                         now, now, clients, None if flag else policy.expires_at(v, now),
-                        s["model"], digest, classify.PROMPT_VERSION))
+                        s["model"], digest, classify.PROMPT_VERSION, probation))
             if flag:
                 flagged += 1
                 log.info("%s %s (%s %.2f): %s", status.upper(), d, v["category"], v["confidence"], v["reason"])
