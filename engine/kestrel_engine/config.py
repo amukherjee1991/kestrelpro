@@ -5,6 +5,7 @@ in the database (store.get_settings).
 """
 import ipaddress
 import os
+from urllib.parse import urlsplit
 
 # Inside the KestrelPro container FTL is on localhost; start.sh exports the real port.
 FTL_URL = os.environ.get("FTL_URL", os.environ.get("PIHOLE_URL", "http://127.0.0.1")).rstrip("/")
@@ -14,6 +15,8 @@ CLI_PW_PATH = os.environ.get("FTL_CLI_PW", "/etc/pihole/cli_pw")
 # Fallback when the engine runs outside the container: an app password (app_sudo=false).
 FTL_PASSWORD = os.environ.get("FTL_PASSWORD") or os.environ.get("PIHOLE_PASSWORD") or ""
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434").rstrip("/")
+# Where the privacy check sends its test query (privacy.py): the DNS server itself, port 53.
+DNS_SERVER = os.environ.get("KESTREL_DNS_SERVER") or urlsplit(FTL_URL).hostname or "127.0.0.1"
 DB_PATH = os.environ.get("DB_PATH", "/etc/kestrel/kestrel.db")
 # Optional: address ranges of VPN clients (e.g. a WireGuard subnet), comma-separated, so the UI
 # can tell "away from home" lookups apart. Empty: every device counts as on the local network.

@@ -11,8 +11,8 @@ import time
 import requests
 from flask import Blueprint, Flask, abort, g, jsonify, request
 
-from . import (accuracy, auth, classify, config, ftl as ftl_api, ingest, models, notify, policies, policy, safety,
-               store, suggestions)
+from . import (accuracy, auth, classify, config, ftl as ftl_api, ingest, location, models, notify, policies, policy,
+               privacy, safety, store, suggestions)
 
 OPEN_PATHS = {"/healthz"}
 STATUS_FILTERS = {
@@ -432,6 +432,28 @@ def create_app(ftl, worker, jobs=None):
         except (ValueError, requests.RequestException) as e:
             return _suggestion_error(e)
         return jsonify({"ok": True})
+
+    # ---- location privacy (location.py, privacy.py) -----------------------------------
+    @api.get("/location")
+    def get_location():
+        try:
+            return jsonify(location.summary(ftl, directory))
+        except requests.RequestException as e:
+            return jsonify({"error": "dns_server", "message": f"The DNS server didn't answer: {e}"}), 502
+
+    @api.post("/location/<service_id>")
+    def set_location(service_id):
+        groups = (request.get_json(silent=True) or {}).get("groups")
+        if not isinstance(groups, list) or not all(isinstance(x, int) and not isinstance(x, bool) for x in groups):
+            return jsonify({"error": "bad_request", "message": "groups must be a list of group IDs"}), 400
+        try:
+            return jsonify({"ok": True, **location.apply(ftl, directory, service_id, groups)})
+        except (ValueError, requests.RequestException) as e:
+            return _suggestion_error(e)
+
+    @api.get("/privacy")
+    def get_privacy():
+        return jsonify(privacy.check(ftl))
 
     # ---- notifications (notify.py) ---------------------------------------------------
     @api.post("/notify/test")

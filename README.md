@@ -168,6 +168,26 @@ password.
 | ![Suggestions](docs/screenshots/suggestions.png) | ![Evidence](docs/screenshots/needs-approval-evidence.png) |
 | Suggestions | Evidence under the reason |
 
+### Location privacy
+
+- **Location shield.** Phones, laptops and apps find out where they are by asking online
+  location services: Microsoft's (Windows, and so Teams, Maps and Weather), Apple's (iPhone,
+  iPad, Mac), Google location history, IP-address lookup services and Mozilla's. On the
+  **Location privacy** page you block each one for the device groups you choose. The page
+  shows which devices asked each service in the last 7 days and says what stops working
+  (for example, Teams on Windows asks for the emergency address to be typed in). Blocks are
+  ordinary deny entries marked `location-shield`; pausing or undoing the AI's blocks leaves
+  them in place.
+- **What your DNS reveals.** A live test looks up Google's `o-o.myaddr.l.google.com` through
+  KestrelPro and shows whether name servers are told your network's address (EDNS Client
+  Subnet), alongside upstream resolvers known to pass it on (Google, OpenDNS, Quad9's ECS
+  variant) and settings such as `add-subnet` or `add-mac`.
+- **Limits.** Services still see your public IP address and can estimate the area from it,
+  phones with GPS know where they are outdoors, and devices that send their DNS elsewhere
+  (a work VPN or Zero Trust client) skip these blocks. KestrelPro doesn't fake a location.
+
+![Location privacy](docs/screenshots/location-privacy.png)
+
 ## Screenshots
 
 Taken from a test container filled with made-up data (`engine/tools/seed_demo.py`).
@@ -235,8 +255,6 @@ and opens an issue when Pi-hole publishes newer ones.
 
 - Opt-in internet evidence (RDAP/WHOIS registration age) for the model.
 - A fast, calibrated first-pass classifier in front of the model ([#1](https://github.com/amukherjee1991/kestrelpro/issues/1)).
-- Location privacy: the planned per-device location spoofing can't work as designed;
-  alternatives are open for decision ([#2](https://github.com/amukherjee1991/kestrelpro/issues/2)).
 
 ## License
 
