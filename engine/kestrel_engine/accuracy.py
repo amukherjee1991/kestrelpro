@@ -18,6 +18,7 @@ POSITIVE = (store.APPROVED, store.MANUAL_BLOCKED)
 NEGATIVE = (store.REJECTED, store.UNBLOCKED)
 NOT_JUDGED = "blocked by you"
 MIN_EXAMPLES = 4
+KEPT_EXAMPLES = 40
 BULK = "%undo`%"  # reason logged by policy.undo()
 
 
@@ -82,10 +83,12 @@ def report(db, settings):
     }
 
 
-def examples(db, n=8):
-    """Up to n recent decisions, balanced between blocked and kept, for the prompt."""
-    rows = labelled(db, limit=200)
+def examples(db, n=8, kept=None):
+    """Recent decisions for the prompt: up to n // 2 blocked, and up to `kept` kept (default: the
+    rest of n). Ingest passes KEPT_EXAMPLES so older "keep this working" lessons don't fade out
+    after a few newer decisions: a wrong block costs more than a missed ad."""
+    rows = labelled(db, limit=500)
     blocked = [r["domain"] for r in rows if r["blocked"]][: n // 2]
-    kept = [r["domain"] for r in rows if not r["blocked"]][: n - len(blocked)]
+    kept = [r["domain"] for r in rows if not r["blocked"]][: (n - len(blocked)) if kept is None else kept]
     # A couple of examples would just bias the model; wait until there is a small set.
     return {"blocked": blocked, "kept": kept} if len(blocked) + len(kept) >= MIN_EXAMPLES else None

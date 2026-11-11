@@ -218,7 +218,16 @@ def create_app(ftl, worker, jobs=None):
         if not status or "." not in domain or " " in domain:
             abort(400)
         reverted = policy.set_status(ftl, db(), domain, status, event)
-        return jsonify({"ok": True, "status": status, "reverted": reverted})
+        learned = [r["site"] for r in store.learned_rows(db()) if r["source"] == domain]
+        return jsonify({"ok": True, "status": status, "reverted": reverted, "learned": learned})
+
+    @api.delete("/protected/learned/<path:site>")
+    def forget_learned(site):
+        """Stop protecting a site learned from an unblock (it can be learned again by a new unblock)."""
+        if not store.remove_learned(db(), site.strip().lower().rstrip(".")):
+            abort(404)
+        worker.wake()
+        return jsonify({"ok": True})
 
     @api.post("/pending/approve-all")
     def approve_all():
@@ -230,7 +239,9 @@ def create_app(ftl, worker, jobs=None):
     @api.route("/settings", methods=["GET", "POST"])
     def settings():
         if request.method == "GET":
+            policy.learned_backfill(db())
             return jsonify({**store.get_settings(db()), "protected_builtin": sorted(policy.PROTECTED_BUILTIN),
+                            "protected_learned": store.learned_rows(db()),
                             "vpn_subnets": [str(n) for n in config.VPN_SUBNETS]})
         body = request.get_json(force=True)
         changes = {}
@@ -256,6 +267,8 @@ def create_app(ftl, worker, jobs=None):
             changes["storm_devices"] = min(max(int(body["storm_devices"]), 1), 100)
         if "few_shot" in body:
             changes["few_shot"] = bool(body["few_shot"])
+        if "learn_from_unblocks" in body:
+            changes["learn_from_unblocks"] = bool(body["learn_from_unblocks"])
         if "list_checks_per_hour" in body:
             changes["list_checks_per_hour"] = min(max(int(body["list_checks_per_hour"]), 0), 600)
         if body.get("notify_kind") in ("ntfy", "webhook"):

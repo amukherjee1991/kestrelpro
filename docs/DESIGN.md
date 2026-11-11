@@ -47,9 +47,23 @@ weekly workflow opens an issue when upstream publishes newer ones.
 
 1. The engine reads new queries by ID every few seconds (paging past FTL's 10,000-row limit).
 2. Allowed domains not seen before (or whose verdict expired) are queued; local names, the
-   never-block list and allow-listed domains are skipped.
+   never-block list (built in, the user's own, and sites learned from unblocks) and allow-listed
+   domains are skipped. Built-in protection covers the CDN and traffic-manager zones
+   (`akadns.net`, `akamaiedge.net`, `cloudfront.net`, ...): their names don't say whom they serve.
+   Protection follows CNAMEs: when a device gets a CNAME answer for a protected name and looks
+   up another name within a few seconds, the engine resolves the protected name; if the chain
+   passes through that name, it is recorded as legitimate instead of judged.
 3. Batches go to the model with local evidence (devices, rhythm, lookups next to blocked ones)
-   and, optionally, a few of the user's own past decisions as examples.
+   and, optionally, the user's own past decisions as examples: a few recent blocks and up to 40
+   "keep this working" decisions, so older lessons don't fade out.
+
+Unblocking a domain, or saying "Don't block" to a suggestion, also protects its site from the
+model from then on (`learn_from_unblocks`, on by default): `chase.com` for
+`gtm.secure.chase.com.akadns.net` (the host a traffic-manager name embeds), `example.co.uk`
+for `cdn.example.co.uk`. Bare CDN names (`e1234.a.akamaiedge.net`) teach nothing. Learned sites
+are listed in the settings (`protected_learned`) and removed with
+`DELETE /protected/learned/<site>`; unblocks made before this existed are learned once on
+upgrade. This only stops the model: block lists still apply.
 4. Each device's groups decide what happens: Review first queues it, Automatic blocks it for
    those groups only (on a 24 h trial), Off ignores it.
 5. Everything is recorded with the model, its exact digest and the prompt version, so the

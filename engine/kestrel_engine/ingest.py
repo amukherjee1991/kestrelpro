@@ -10,7 +10,8 @@ import time
 
 import requests
 
-from . import accuracy, classify, config, evidence, ftl as ftl_api, notify, policies, policy, safety, store, suggestions
+from . import (accuracy, classify, cname, config, evidence, ftl as ftl_api, notify, policies, policy, safety, store,
+               suggestions)
 
 log = logging.getLogger("kestrel.ingest")
 
@@ -20,6 +21,11 @@ MAX_ROWS_PER_POLL = 100_000
 # Queued domains beyond this are dropped, least-seen first; they come back on their next lookup.
 MAX_QUEUE = 2000
 PREFLIGHT_EVERY = 600
+# A device that gets a CNAME for a protected name looks up the target right after (iOS/macOS
+# follow chains themselves). Lookups this soon after one count as possibly part of that chain.
+CNAME_FOLLOW_SECONDS = 3
+# DNS lookups to confirm a chain, per poll; the rest wait for the next poll.
+MAX_CHAIN_LOOKUPS = 20
 
 
 class Ingest:
@@ -88,10 +94,14 @@ class Ingest:
         seen = {}
         blocked = evidence.blocked_times(queries)
         self.list_checks.collect(queries)
+        protected = policy.never_block(db, s)
+        origins = {}  # ip -> [(time, protected name whose answer was a CNAME)]
         for q in queries:
             if q.get("status") not in ftl_api.ALLOWED_STATUSES or not q.get("domain"):
                 continue
             d = q["domain"].lower().rstrip(".")
+            if (q.get("reply") or {}).get("type") == "CNAME" and policy.is_protected(d, protected):
+                origins.setdefault((q.get("client") or {}).get("ip") or "?", []).append((q.get("time") or 0, d))
             item = seen.setdefault(d, {"lookups": 0, "devices": {}, "near_blocked": 0})
             item["lookups"] += 1
             ip = (q.get("client") or {}).get("ip") or "?"
@@ -107,8 +117,11 @@ class Ingest:
         if not seen:
             return
         allow = self._allowlist()
-        candidates = [d for d in seen if d not in allow and not policy.skip_domain(d, s["protected_extra"])]
+        candidates = [d for d in seen if d not in allow and not policy.skip_domain(d, protected)]
         done = store.decided(db, candidates)
+        if origins:
+            followed = self._follow_cnames(db, [d for d in candidates if d not in done], seen, origins)
+            done |= followed
         now = time.time()
         with self.lock:
             for d in candidates:
@@ -119,6 +132,35 @@ class Ingest:
             if len(self.queue) > MAX_QUEUE:
                 for d in sorted(self.queue, key=lambda d: _priority(self.queue[d]))[:len(self.queue) - MAX_QUEUE]:
                     del self.queue[d]
+
+    def _follow_cnames(self, db, candidates, seen, origins):
+        """Candidates that are CNAME targets of a protected name: recorded as legitimate, never judged.
+        A candidate qualifies when a device looked it up within CNAME_FOLLOW_SECONDS after getting a
+        CNAME answer for a protected name, and resolving that name confirms the chain."""
+        out, lookups, now = set(), 0, time.time()
+        for d in candidates:
+            near = set()
+            for ip, dev in seen[d]["devices"].items():
+                for t0, origin in origins.get(ip, ()):
+                    if origin != d and any(0 <= t - t0 <= CNAME_FOLLOW_SECONDS for t in dev["times"]):
+                        near.add(origin)
+            for origin in sorted(near):
+                if lookups >= MAX_CHAIN_LOOKUPS:
+                    break
+                lookups += 1
+                if d in cname.chain(origin, config.DNS_SERVER):
+                    reason = f"CNAME target of {origin}, which is protected"
+                    db.execute("insert or replace into verdicts (domain, category, confidence, reason, status, "
+                               "queries, devices, judged_at, updated_at, expires_at, model) "
+                               "values (?, 'legitimate', 1.0, ?, ?, ?, ?, ?, ?, ?, 'rule')",
+                               (d, reason, store.ALLOWED, seen[d]["lookups"], len(seen[d]["devices"]), now, now,
+                                now + store.VERDICT_TTL["legitimate"]))
+                    log.info("kept %s: %s", d, reason)
+                    out.add(d)
+                    break
+        if out:
+            db.commit()
+        return out
 
     # ---- judging ----------------------------------------------------------------
 
@@ -141,7 +183,7 @@ class Ingest:
                 evidence.add_history(self.ftl, d, it, now)
             notes = {d: evidence.summarise(it) for d, it in items.items()}
             batch = [(d, it["lookups"], len(it["devices"]), notes[d][1]) for d, it in items.items()]
-            examples = accuracy.examples(db) if s["few_shot"] else None
+            examples = accuracy.examples(db, kept=accuracy.KEPT_EXAMPLES) if s["few_shot"] else None
             verdicts = classify.classify(batch, s["model"], examples=examples)
         except requests.RequestException:
             with self.lock:  # try these again once the model is back
@@ -213,6 +255,8 @@ class Ingest:
                        (store.USER_ALLOWED, time.time(), d))
             store.log_event(db, d, store.UNBLOCKED, reason="removed from the deny list outside KestrelPro")
         db.commit()
+        for d in gone:
+            policy.learn_from(db, d)
         if gone:
             log.info("reconciled %d block(s) removed outside KestrelPro", len(gone))
 

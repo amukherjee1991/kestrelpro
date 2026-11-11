@@ -86,7 +86,13 @@ def _m5_evidence_suggestions(db):
     db.execute("create table if not exists dismissed (kind text, key text, at real, primary key (kind, key))")
 
 
-MIGRATIONS = [_m1_base, _m2_provenance, _m3_probation, _m4_policies_models, _m5_evidence_suggestions]
+def _m6_learned_protected(db):
+    """Sites learned from your unblocks (policy.learn_from): the model never judges them again."""
+    db.execute("create table if not exists learned_protected (site text primary key, source text, at real)")
+
+
+MIGRATIONS = [_m1_base, _m2_provenance, _m3_probation, _m4_policies_models, _m5_evidence_suggestions,
+              _m6_learned_protected]
 
 
 def open_db(path=None):
@@ -126,6 +132,28 @@ def save_settings(db, changes):
 def log_event(db, domain, action, category=None, confidence=None, reason=None, clients="[]"):
     db.execute("insert into events (at, domain, action, category, confidence, reason, clients) "
                "values (?, ?, ?, ?, ?, ?, ?)", (time.time(), domain, action, category, confidence, reason, clients))
+
+
+def learned_sites(db):
+    return [r[0] for r in db.execute("select site from learned_protected")]
+
+
+def learned_rows(db):
+    return [dict(r) for r in db.execute("select site, source, at from learned_protected order by at desc")]
+
+
+def add_learned(db, site, source):
+    """True if `site` is new."""
+    cur = db.execute("insert or ignore into learned_protected (site, source, at) values (?, ?, ?)",
+                     (site, source, time.time()))
+    db.commit()
+    return cur.rowcount > 0
+
+
+def remove_learned(db, site):
+    cur = db.execute("delete from learned_protected where site = ?", (site,))
+    db.commit()
+    return cur.rowcount > 0
 
 
 def decided(db, domains, now=None):

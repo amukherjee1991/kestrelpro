@@ -11,7 +11,7 @@ log = logging.getLogger("kestrel.classify")
 
 CATEGORIES = ["ads", "tracking", "telemetry", "malicious", "legitimate", "unknown"]
 # Bump when SYSTEM_PROMPT or VERDICT_SCHEMA changes; stored on every verdict.
-PROMPT_VERSION = "2026-10-30.1"
+PROMPT_VERSION = "2026-11-10.1"
 
 SYSTEM_PROMPT = """You review DNS lookups from a home network's DNS ad blocker. \
 For each domain, decide what it is mainly used for:
@@ -31,7 +31,10 @@ Keep each reason under 15 words.
 Each domain may come with evidence from this network: which devices looked it up, whether a \
 device repeats it on a steady clock (common for telemetry and tracking beacons), and how often \
 its lookups came right next to lookups that were already blocked as ads or trackers. Treat this \
-as supporting evidence, not proof: a steady rhythm also fits weather, sync and update checks."""
+as supporting evidence, not proof: a steady rhythm also fits weather, sync and update checks. \
+Lookups next to blocked ones are never enough on their own: a page loads its content, logins and \
+ads at the same moment. Don't infer a domain's purpose from an abbreviation in its name (gtm, dfp, \
+rtb, pixel) unless you recognise the owner."""
 
 VERDICT_SCHEMA = {
     "type": "object",
@@ -84,7 +87,8 @@ def _system_prompt(examples):
     if examples["blocked"]:
         parts.append("- They chose to block: " + ", ".join(examples["blocked"]))
     if examples["kept"]:
-        parts.append("- They chose to keep working (do not block similar ones): " + ", ".join(examples["kept"]))
+        parts.append("- They chose to keep working (never block these, and treat other domains of the same "
+                     "service as legitimate): " + ", ".join(examples["kept"]))
     return "\n".join(parts)
 
 
