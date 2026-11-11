@@ -26,6 +26,26 @@ PROTECTED_BUILTIN = {
     "cloudflare.com", "akamaized.net", "fastly.net", "amazonaws.com",
 }
 
+# CDN and traffic-manager zones. Names under them are shared infrastructure for many sites:
+# random-looking edge names (e1234.a.akamaiedge.net, d15nwp.cloudfront.net) or load-balancer
+# names that embed the customer's host (gtm.secure.chase.com.akadns.net). The model can't tell
+# who they serve and has blocked banks' logins and Apple push through them, so it never judges them.
+INFRA_ZONES = (
+    "akadns.net", "akamaiedge.net", "akamaihd.net", "akamai.net", "edgekey.net", "edgesuite.net",
+    "akamaized.net", "cloudfront.net", "azurefd.net", "azureedge.net", "trafficmanager.net",
+    "fastly.net", "fastlylb.net", "cdn.cloudflare.net",
+)
+PROTECTED_BUILTIN |= set(INFRA_ZONES)
+
+# Last labels that make an infra name's prefix look like a real host (gtm.secure.chase.com.akadns.net
+# embeds secure.chase.com; e1234.a.akamaiedge.net embeds nothing). Not every TLD: just enough to
+# recognise the customer names these zones carry.
+_EMBED_TLDS = {
+    "com", "net", "org", "io", "co", "us", "uk", "ca", "au", "de", "fr", "nl", "es", "it", "jp", "in",
+    "br", "mx", "se", "no", "dk", "fi", "ch", "at", "be", "ie", "nz", "sg", "app", "dev", "me", "tv",
+    "info", "biz", "edu", "gov", "mil", "ai", "cloud",
+}
+
 # Local names plus the reserved test TLDs (RFC 2606/6761), e.g. Chrome's
 # "this-url-does-not-exist-....invalid" DNS-hijack probe.
 LOCAL_SUFFIXES = (".lan", ".local", ".arpa", ".home", ".internal", ".invalid", ".test", ".example", ".localhost")
@@ -48,6 +68,72 @@ def is_protected(domain, extra=()):
 def skip_domain(domain, extra=()):
     return ("." not in domain or domain.endswith(LOCAL_SUFFIXES)
             or domain.replace(".", "").isdigit() or is_protected(domain, extra))
+
+
+def in_infra(domain):
+    return any(domain == z or domain.endswith("." + z) for z in INFRA_ZONES)
+
+
+def embedded_host(domain):
+    """The customer host an infra name carries: secure.chase.com for gtm.secure.chase.com.akadns.net.
+    Only under INFRA_ZONES, which nobody else can register names in; elsewhere a name like
+    chase.com.login-check.xyz is phishing, not Chase."""
+    domain = domain.lower().rstrip(".")
+    for z in INFRA_ZONES:
+        if domain.endswith("." + z):
+            labels = domain[:-len(z) - 1].split(".")
+            if len(labels) >= 2 and labels[-1] in _EMBED_TLDS:
+                return ".".join(labels)
+            return None
+    return None
+
+
+def learn_site(domain):
+    """The site a "keep this working" decision on `domain` should protect, or None.
+    gtm.secure.chase.com.akadns.net -> chase.com; cdn.example.co.uk -> example.co.uk;
+    e1234.a.akamaiedge.net -> None (it names no site, and protecting Akamai is already built in)."""
+    domain = domain.lower().rstrip(".")
+    host = embedded_host(domain)
+    if host is None and in_infra(domain):
+        return None
+    site = safety.registrable(host or domain)
+    if "." not in site or is_protected(site):
+        return None
+    return site
+
+
+def learned_backfill(db):
+    """Once: learn from unblocks made before learning existed. Bulk `undo` removals don't count,
+    nor domains you have blocked again since."""
+    if store.get_state(db, "learned_backfilled") == "1":
+        return
+    rows = db.execute(
+        "select distinct e.domain from events e join verdicts v on v.domain = e.domain "
+        "where e.action in (?, ?) and coalesce(e.reason, '') not like ? and v.status = ?",
+        (store.UNBLOCKED, store.REJECTED, "%undo`%", store.USER_ALLOWED)).fetchall()
+    for (d,) in rows:
+        site = learn_site(d)
+        if site:
+            store.add_learned(db, site, d)
+    store.set_state(db, "learned_backfilled", "1")
+
+
+def never_block(db, settings):
+    """Your never-block list plus the sites learned from your unblocks."""
+    learned_backfill(db)
+    return list(settings["protected_extra"]) + store.learned_sites(db)
+
+
+def learn_from(db, domain, settings=None):
+    """You kept `domain` working: protect its site from the model from now on. Returns the site or None."""
+    settings = settings or store.get_settings(db)
+    if not settings.get("learn_from_unblocks", True):
+        return None
+    site = learn_site(domain)
+    if not site or is_protected(site, never_block(db, settings)):
+        return None
+    store.add_learned(db, site, domain)
+    return site
 
 
 def flags(verdict, settings):
@@ -89,6 +175,9 @@ def set_status(ftl, db, domain, status, action=None):
         r = dict(row) if row else {"category": "ads", "confidence": 1.0, "reason": "blocked by you", "clients": "[]"}
         store.log_event(db, domain, action, r["category"], r["confidence"], r["reason"], r["clients"])
     db.commit()
+    # Keeping a domain working teaches the engine to leave its whole site alone.
+    if action in (store.UNBLOCKED, store.REJECTED):
+        learn_from(db, domain)
     # Unblocking one domain of a site is a hint that its siblings' fresh blocks may be wrong too.
     if action == store.UNBLOCKED:
         return safety.revert_siblings(ftl, db, domain)

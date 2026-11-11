@@ -105,6 +105,21 @@ class ApiTest(unittest.TestCase):
         self.assertIn(r.status_code, (200, 204))
         self.assertIn("X-CSRF-TOKEN", r.headers["Access-Control-Allow-Headers"])
 
+    def test_unblock_reports_and_lists_what_it_learned(self):
+        self.client.set_cookie("sid", "good")
+        h = {"X-CSRF-TOKEN": "tok"}
+        self.ftl.deny("gtm.secure.chase.com.akadns.net", "kestrel: tracking")
+        r = self.client.post(f"{P}/decisions/gtm.secure.chase.com.akadns.net", json={"action": "unblock"}, headers=h)
+        self.assertEqual(r.json["learned"], ["chase.com"])
+        learned = self.client.get(f"{P}/settings").json["protected_learned"]
+        self.assertEqual([(x["site"], x["source"]) for x in learned], [("chase.com", "gtm.secure.chase.com.akadns.net")])
+        self.assertEqual(self.client.delete(f"{P}/protected/learned/chase.com").status_code, 403)  # needs CSRF
+        self.assertEqual(self.client.delete(f"{P}/protected/learned/chase.com", headers=h).status_code, 200)
+        self.assertEqual(self.client.get(f"{P}/settings").json["protected_learned"], [])
+        self.assertEqual(self.client.delete(f"{P}/protected/learned/chase.com", headers=h).status_code, 404)
+        r = self.client.post(f"{P}/settings", json={"learn_from_unblocks": False}, headers=h)
+        self.assertIs(r.json["learn_from_unblocks"], False)
+
     def test_settings_roundtrip(self):
         self.client.set_cookie("sid", "good")
         r = self.client.post(f"{P}/settings", json={"mode": "auto", "cadence": "eco", "min_confidence": 2},

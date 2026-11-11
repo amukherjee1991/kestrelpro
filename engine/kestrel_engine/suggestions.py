@@ -173,7 +173,7 @@ def sites(db, settings):
     out = []
     for site, domains in groups.items():
         if (len(domains) < SITE_MIN_BLOCKED or site in done or site in dismissed
-                or policy.is_protected(site, settings["protected_extra"])):
+                or policy.is_protected(site, policy.never_block(db, settings))):
             continue
         out.append({"site": site, "regex": site_regex(site), "domains": sorted(domains)})
     return sorted(out, key=lambda x: -len(x["domains"]))
@@ -185,7 +185,7 @@ def rules(db):
 
 def block_site(ftl, db, site):
     settings = store.get_settings(db)
-    if policy.is_protected(site, settings["protected_extra"]):
+    if policy.is_protected(site, policy.never_block(db, settings)):
         raise ValueError(f"{site} is on the never-block list")
     match = next((s for s in sites(db, settings) if s["site"] == site), None)
     if not match:
