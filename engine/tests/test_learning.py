@@ -52,6 +52,17 @@ class InfraAndLearningTest(unittest.TestCase):
         self.assertIsNone(policy.learn_site("creditkarmacdn-a.akamaihd.net"))
         self.assertIsNone(policy.learn_site("prod.ocws1.live.com.akadns.net"))  # live.com is built in
 
+    def test_hosting_platforms_learn_only_the_tenant(self):
+        host = "phishing-onto-mcp-6p3adirf2q-uc.a.run.app"
+        self.assertEqual(policy.learn_site(host), host)
+        self.assertEqual(policy.learn_site("myapp.vercel.app"), "myapp.vercel.app")
+        self.assertIsNone(policy.learn_site("bucket.s3.amazonaws.com"))  # amazonaws.com is built in
+        self.assertIsNone(policy.learn_site("run.app"))
+        policy.set_status(self.ftl, self.db, host, store.USER_ALLOWED, store.UNBLOCKED)
+        protected = policy.never_block(self.db, store.get_settings(self.db))
+        self.assertTrue(policy.skip_domain(host, protected))
+        self.assertFalse(policy.skip_domain("other-tenant-uc.a.run.app", protected))
+
     def test_unblock_protects_the_whole_site_from_the_model(self):
         self.ftl.deny("gtm.secure.chase.com.akadns.net", "kestrel: tracking")
         policy.set_status(self.ftl, self.db, "gtm.secure.chase.com.akadns.net", store.USER_ALLOWED, store.UNBLOCKED)
