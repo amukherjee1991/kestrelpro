@@ -159,6 +159,12 @@ class CnameTest(unittest.TestCase):
         q.assert_not_called()
 
 
+class PromptTest(unittest.TestCase):
+    def test_adult_content_is_judged_by_what_it_does(self):
+        self.assertIn("Adult content is not a category", classify.SYSTEM_PROMPT)
+        self.assertIn("ad servers, trackers", classify.SYSTEM_PROMPT)
+
+
 class ExamplesTest(unittest.TestCase):
     def test_old_keep_decisions_stay_in_the_prompt(self):
         db = store.open_db(os.path.join(tempfile.mkdtemp(), "k.db"))
