@@ -11,7 +11,7 @@ log = logging.getLogger("kestrel.classify")
 
 CATEGORIES = ["ads", "tracking", "telemetry", "malicious", "legitimate", "unknown"]
 # Bump when SYSTEM_PROMPT or VERDICT_SCHEMA changes; stored on every verdict.
-PROMPT_VERSION = "2026-11-10.1"
+PROMPT_VERSION = "2026-11-14.1"
 
 SYSTEM_PROMPT = """You review DNS lookups from a home network's DNS ad blocker. \
 For each domain, decide what it is mainly used for:
@@ -27,6 +27,11 @@ missed ad. Give high confidence only when you recognise the domain or its owner 
 its purpose is clear. Domains that mix content with ads (e.g. a CDN or a first-party \
 API) are legitimate. Confidence is a whole-number percentage from 0 (a guess) to 100 (certain). \
 Keep each reason under 15 words.
+
+Adult content is not a category and not a reason to block: judge adult sites like any \
+other site. Their pages, images, video and the CDNs that serve them are legitimate; only \
+their ad servers, trackers and real malware or scam domains get those categories. Read \
+brand names as names (rabbitscams is a cam site, not a scam).
 
 Each domain may come with evidence from this network: which devices looked it up, whether a \
 device repeats it on a steady clock (common for telemetry and tracking beacons), and how often \
