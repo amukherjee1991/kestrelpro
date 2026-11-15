@@ -88,15 +88,31 @@ def embedded_host(domain):
     return None
 
 
+# Platforms where every customer gets a subdomain: one tenant says nothing about the others,
+# and a phishing page on Cloud Run must not protect all of Cloud Run.
+HOSTING_ZONES = (
+    "run.app", "appspot.com", "web.app", "firebaseapp.com", "cloudfunctions.net", "vercel.app",
+    "netlify.app", "pages.dev", "workers.dev", "r2.dev", "trycloudflare.com", "github.io",
+    "gitlab.io", "herokuapp.com", "azurewebsites.net", "azurestaticapps.net", "onrender.com",
+    "fly.dev", "replit.app", "repl.co", "glitch.me", "ngrok.io", "ngrok-free.app", "amazonaws.com",
+    "blogspot.com", "wordpress.com", "wixsite.com", "duckdns.org", "ddns.net", "no-ip.org",
+)
+
+
 def learn_site(domain):
     """The site a "keep this working" decision on `domain` should protect, or None.
     gtm.secure.chase.com.akadns.net -> chase.com; cdn.example.co.uk -> example.co.uk;
-    e1234.a.akamaiedge.net -> None (it names no site, and protecting Akamai is already built in)."""
+    e1234.a.akamaiedge.net -> None (it names no site, and protecting Akamai is already built in);
+    x-abc-uc.a.run.app -> itself (hosting platforms: only that tenant)."""
     domain = domain.lower().rstrip(".")
     host = embedded_host(domain)
     if host is None and in_infra(domain):
         return None
-    site = safety.registrable(host or domain)
+    host = host or domain
+    if any(host == z or host.endswith("." + z) for z in HOSTING_ZONES):
+        # Only the exact tenant; the platform itself is never learned.
+        return None if host in HOSTING_ZONES or is_protected(host) else host
+    site = safety.registrable(host)
     if "." not in site or is_protected(site):
         return None
     return site

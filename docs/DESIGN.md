@@ -60,7 +60,8 @@ weekly workflow opens an issue when upstream publishes newer ones.
 Unblocking a domain, or saying "Don't block" to a suggestion, also protects its site from the
 model from then on (`learn_from_unblocks`, on by default): `chase.com` for
 `gtm.secure.chase.com.akadns.net` (the host a traffic-manager name embeds), `example.co.uk`
-for `cdn.example.co.uk`. Bare CDN names (`e1234.a.akamaiedge.net`) teach nothing. Learned sites
+for `cdn.example.co.uk`. Bare CDN names (`e1234.a.akamaiedge.net`) teach nothing, and on hosting
+platforms (`run.app`, `vercel.app`, `github.io`, ...) only that exact host is learned. Learned sites
 are listed in the settings (`protected_learned`) and removed with
 `DELETE /protected/learned/<site>`; unblocks made before this existed are learned once on
 upgrade. This only stops the model: block lists still apply.
